@@ -1,0 +1,12 @@
+[Unit]
+Description=Expand the root partition and filesystem to fill the disk
+After=local-fs.target systemd-udevd.service
+Requires=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/expand-rootfs.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Register the Flathub flatpak remote for @FLATPAK_MINIMAL_USER@
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+Requires=systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@FLATPAK_MINIMAL_USER@
+Group=@FLATPAK_MINIMAL_USER@
+ExecStart=/usr/bin/flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+[Install]
+WantedBy=multi-user.target
