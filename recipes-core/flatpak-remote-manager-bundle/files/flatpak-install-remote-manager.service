@@ -1,0 +1,15 @@
+[Unit]
+Description=Install the flutter_remote_manager flatpak app
+After=flatpak-add-flathub-remote.service rootfs-expand.service network-online.target systemd-user-sessions.service
+Wants=flatpak-add-flathub-remote.service network-online.target
+Requires=systemd-user-sessions.service rootfs-expand.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@FLATPAK_MINIMAL_USER@
+Group=@FLATPAK_MINIMAL_USER@
+ExecStart=/usr/sbin/install-remote-manager.sh
+
+[Install]
+WantedBy=multi-user.target

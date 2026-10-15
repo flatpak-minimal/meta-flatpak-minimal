@@ -12,6 +12,9 @@ the org's Dart packages.
 | `xdg-portal-settings-minimal` | [xdg-portal-settings-minimal](https://github.com/flatpak-minimal/xdg-portal-settings-minimal) | Standalone `org.freedesktop.impl.portal.Settings` service. Rust. |
 | `flatpak-minimal-flatpak-dart-flutter-remote-manager` | [flatpak_dart](https://github.com/flatpak-minimal/flatpak_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-minimal-appstream-dart-flathub-catalog` | [appstream_dart](https://github.com/flatpak-minimal/appstream_dart) | Flutter app; needs meta-flutter. |
+| `flatpak-flathub-remote` | (this layer) | Oneshot systemd service; registers Flathub as a per-user flatpak remote on boot so `flatpak` has a working remote without a terminal. |
+| `rootfs-expand-firstboot` | (this layer) | Oneshot systemd service; grows the root partition and filesystem to fill the disk. |
+| `flatpak-remote-manager-bundle` | (this layer) | Oneshot systemd service; installs the released `flutter_remote_manager` `.flatpak` bundle on boot. |
 
 The two Flutter recipes live under `dynamic-layers/flutter-layer/` and only
 parse when `meta-flutter` is in the build. Everything else needs `openembedded-core`
@@ -55,6 +58,31 @@ both.
 
 `xdg-portal-settings-minimal` ships no D-Bus service file and no systemd unit
 upstream, so nothing starts it automatically.
+
+## Flathub remote
+
+`flatpak-flathub-remote` runs `flatpak remote-add --if-not-exists --user
+flathub ...` on boot. Idempotent. Runs as `${FLATPAK_MINIMAL_USER}` (default
+`agl-driver`; override for non-AGL builds).
+
+The AppStream data (app icons, screenshots, descriptions) is refreshed on
+every boot by `flatpak-appstream-refresh.service` and its `-system` twin. They
+are `Type=exec`, so boot does not wait for the download.
+
+## Installing a flatpak app on boot
+
+`flatpak-remote-manager-bundle` fetches the `.flatpak` bundle from the app's
+GitHub release (`BUNDLE_RELEASE`, checksum-pinned) and installs it with
+`flatpak install --user --bundle` on boot, after the Flathub remote. To move to
+a new release, change `BUNDLE_RELEASE` and `SRC_URI[sha256sum]`.
+Idempotent (skips if already installed, does not auto-update). aarch64 only.
+Runs as `${FLATPAK_MINIMAL_USER}`.
+
+## Rootfs expansion
+
+`rootfs-expand-firstboot` grows the root partition (`parted resizepart`) and
+filesystem (`resize2fs`/`xfs_growfs`/`btrfs`) to fill the disk. Idempotent,
+safe on every boot.
 
 ## Maintenance
 
