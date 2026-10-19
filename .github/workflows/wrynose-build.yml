@@ -1,8 +1,8 @@
-name: master-build
+name: wrynose-build
 
 on:
   pull_request:
-    types: [ opened, synchronize, reopened ]
+    types: [opened, synchronize, reopened]
     # Each matrix job is a full bitbake run on a sequential self-hosted runner.
     # Skip changes that cannot affect one.
     paths-ignore:
@@ -11,7 +11,7 @@ on:
       - '.gitignore'
       - 'LICENSE'
   release:
-    types: [ published, created, edited ]
+    types: [published, created, edited]
   workflow_dispatch:
 
 # One run per branch. Pushes to a pull request supersede each other; a
@@ -22,18 +22,27 @@ concurrency:
 
 jobs:
 
-  master-build:
+  wrynose-build:
 
     strategy:
       fail-fast: false
       matrix:
         machine: [qemux86-64, qemuarm64, qemuriscv64, qemuarm]
 
-    name: master-${{ matrix.machine }}
+    name: wrynose-${{ matrix.machine }}
 
     env:
       MACHINE: ${{ matrix.machine }}
-      YOCTO_BRANCH: master
+      # openembedded-core, meta-yocto, meta-openembedded and meta-flutter
+      # carry wrynose.
+      YOCTO_BRANCH: wrynose
+      # bitbake is versioned, not named after the release: wrynose's
+      # openembedded-core declares BB_MIN_VERSION 2.18.0.
+      BITBAKE_BRANCH: '2.18'
+      # meta-drm and meta-vulkan have no wrynose branch; master is the only
+      # thing to track there.
+      DRM_BRANCH: master
+      VULKAN_BRANCH: master
 
     runs-on: [self-hosted, linux]
 
@@ -50,7 +59,7 @@ jobs:
         --storage-opt overlay.mountopt=nodev,metacopy=on,noxattrs=1
         -v /home/runner/.ssh:/home/dev/.ssh:ro
         -v /mnt/raid10/github-ci/download:/home/dev/dl:Z
-        -v /mnt/raid10/github-ci/sstate/yocto/master-linux-dummy:/home/dev/sstate:Z
+        -v /mnt/raid10/github-ci/sstate/yocto/wrynose-linux-dummy:/home/dev/sstate:Z
 
     steps:
 
@@ -58,28 +67,55 @@ jobs:
         with:
           path: ''
 
+      # Same as meta-flutter's wrynose-build: reclaim other release
+      # branches' build/tmp, but only when the disk is actually short.
+      - name: Free other release-branch trees
+        run: |
+          MIN_FREE_GB=${CI_MIN_FREE_GB:-300}
+          free_gb=$(df -BG --output=avail . | tail -1 | tr -dc '0-9')
+          if [ "${free_gb:-0}" -ge "$MIN_FREE_GB" ]; then
+            echo "${free_gb}G free (>= ${MIN_FREE_GB}G), keeping the other release trees"
+          else
+            echo "${free_gb}G free (< ${MIN_FREE_GB}G), reclaiming other release trees"
+            for d in ../*-linux-dummy; do
+              case "$(basename "$d")" in
+                master-linux-dummy|wrynose-linux-dummy) continue ;;
+              esac
+              [ -d "$d/build/tmp" ] || continue
+              echo "removing $(du -sh "$d/build/tmp" | cut -f1) from $d/build/tmp"
+              rm -rf "$d/build/tmp"
+            done
+          fi
+
+      # The layer set, sources and build tree layout are meta-flutter's
+      # wrynose-build, so this layer is built the way meta-flutter's own CI
+      # builds everything else.
       - name: Fetch layers
         run: |
-          [ -d ../master-flatpak-minimal ] || mkdir -p ../master-flatpak-minimal
-          cd ../master-flatpak-minimal
+          [ -d ../wrynose-linux-dummy ] || mkdir -p ../wrynose-linux-dummy
+          cd ../wrynose-linux-dummy
           pwd
-          ls -la
           # This is a persistent runner and 'git clone' into an existing
           # directory fails, so every layer cloned below is removed first.
           # A layer left off this list silently freezes at whatever revision
           # it was first cloned at.
-          rm -rf bitbake openembedded-core meta-yocto meta-openembedded meta-flutter
+          rm -rf poky bitbake openembedded-core meta-yocto \
+                 meta-openembedded meta-drm meta-vulkan meta-flutter
           # 'wait' with no operands always returns 0, so collect the pids and
           # wait on each one to actually observe a failed clone.
           pids=""
-          for repo in \
-              https://git.openembedded.org/bitbake.git \
-              https://git.openembedded.org/openembedded-core.git \
-              https://git.yoctoproject.org/meta-yocto.git \
-              https://github.com/openembedded/meta-openembedded.git \
-              https://github.com/meta-flutter/meta-flutter.git ; do
-              git clone -b ${{ env.YOCTO_BRANCH }} --single-branch "$repo" &
-              pids="$pids $!:$repo"
+          for entry in \
+              "${{ env.BITBAKE_BRANCH }}|https://github.com/openembedded/bitbake.git" \
+              "${{ env.YOCTO_BRANCH }}|https://github.com/openembedded/openembedded-core.git" \
+              "${{ env.YOCTO_BRANCH }}|https://github.com/yoctoproject/meta-yocto.git" \
+              "${{ env.YOCTO_BRANCH }}|https://github.com/openembedded/meta-openembedded.git" \
+              "${{ env.DRM_BRANCH }}|https://github.com/jwinarske/meta-drm.git" \
+              "${{ env.VULKAN_BRANCH }}|https://github.com/jwinarske/meta-vulkan.git" \
+              "${{ env.YOCTO_BRANCH }}|https://github.com/meta-flutter/meta-flutter.git" ; do
+              branch=${entry%%|*}
+              repo=${entry#*|}
+              git clone -b "$branch" --single-branch "$repo" &
+              pids="$pids $!:$repo@$branch"
           done
 
           rc=0
@@ -95,7 +131,7 @@ jobs:
 
       - name: Recover from an interrupted run
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           MARKER=.ci-build-incomplete
           if [ -e "$MARKER" ]; then
@@ -112,7 +148,7 @@ jobs:
 
       - name: Configure build
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           rm -rf build/conf
           . ./openembedded-core/oe-init-build-env
@@ -120,7 +156,7 @@ jobs:
           echo "MACHINE ??= \"${{ env.MACHINE }}\"" >> ./conf/local.conf
           # meta-flutter's CI configuration: DL_DIR, SSTATE_DIR, the shared
           # hash-equivalence database, distro features and the parallelism cap.
-          # SSTATE_DIR is the same directory meta-flutter's own master build
+          # SSTATE_DIR is the same directory meta-flutter's own wrynose build
           # writes, so flutter-engine and dart-sdk are usually already warm.
           echo 'require ../meta-flutter/conf/distro/include/ci-build.inc' >> ./conf/local.conf
           echo '********** ./conf/local.conf **********'
@@ -136,33 +172,50 @@ jobs:
               ../meta-openembedded/meta-multimedia \
               ../meta-openembedded/meta-networking \
               ../meta-openembedded/meta-python \
+              ../meta-drm \
+              ../meta-vulkan \
               ../meta-flutter \
+              ../meta-flutter/meta-flutter-apps \
               ../../meta-flatpak-minimal
           bitbake-layers show-layers
           echo '***************************************'
+          bitbake -e virtual/kernel | grep "^PV"
+          bitbake -e virtual/kernel | grep "^PN"
+          echo '***************************************'
           bitbake -e core-image-minimal | grep "^DISTRO_FEATURES"
           echo '***************************************'
+          bitbake -e > bb.environment
+
+      # A dry run resolves the whole image dependency graph without building
+      # it, so a recipe that fails to parse or a missing provider shows up
+      # before any long build starts.
+      - name: Dry run flatpak-minimal-image
+        shell: bash
+        working-directory: ../wrynose-linux-dummy
+        run: |
+          . ./openembedded-core/oe-init-build-env
+          bitbake -n flatpak-minimal-image
 
       # The two Rust recipes depend only on oe-core and meta-oe, so they are
       # the cheapest signal that the layer parses and builds. Run them before
       # anything that needs the Flutter SDK.
       - name: Build xdg-portal-settings-minimal
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           . ./openembedded-core/oe-init-build-env
           bitbake xdg-portal-settings-minimal
 
       - name: Build xdg-desktop-portal-agl
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           . ./openembedded-core/oe-init-build-env
           bitbake xdg-desktop-portal-agl
 
       - name: Build flutter-sdk-native
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           . ./openembedded-core/oe-init-build-env
           bitbake flutter-sdk-native
@@ -170,7 +223,7 @@ jobs:
       - name: Build flutter-engine
         id: engine
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           . ./openembedded-core/oe-init-build-env
           bitbake flutter-engine
@@ -182,7 +235,7 @@ jobs:
         # so the app recipes do not parse for a 32-bit machine
         if: ${{ !cancelled() && steps.engine.outcome == 'success' && matrix.machine != 'qemuarm' }}
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           . ./openembedded-core/oe-init-build-env
           bitbake flatpak-minimal-flatpak-dart-flutter-remote-manager
@@ -191,7 +244,7 @@ jobs:
       - name: Build flatpak-minimal-appstream-dart-flathub-catalog
         if: ${{ !cancelled() && steps.engine.outcome == 'success' && matrix.machine != 'qemuarm' }}
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: |
           . ./openembedded-core/oe-init-build-env
           APP=flatpak-minimal-appstream-dart-flathub-catalog
@@ -208,5 +261,5 @@ jobs:
       # leaves the marker for the next one to act on.
       - name: Mark the build complete
         shell: bash
-        working-directory: ../master-flatpak-minimal
+        working-directory: ../wrynose-linux-dummy
         run: rm -f .ci-build-incomplete
