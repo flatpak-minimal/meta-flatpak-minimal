@@ -76,3 +76,8 @@ do_install:append() {
     ln -sf ${libdir}/libsqlite3.so.0 \
         ${D}${FLUTTER_INSTALL_DIR}/${FLUTTER_SDK_VERSION}/${FLUTTER_RUNTIME_MODE}/lib/libsqlite3.so
 }
+
+# pub-cache.bbclass orders do_seed_pub_cache only after do_unpack, but the task
+# copies from the SDK in the recipe sysroot, which do_prepare_recipe_sysroot
+# fills. On a cold build it can run first and fail with "no .pub-cache".
+addtask seed_pub_cache after do_prepare_recipe_sysroot

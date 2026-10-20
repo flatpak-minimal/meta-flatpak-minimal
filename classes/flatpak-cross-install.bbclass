@@ -25,9 +25,10 @@
 #
 # Refs mirrored from a remote are installed from a local copy under the
 # remote's real name, so each records that remote as its origin, and the
-# remote is then pointed back at its real URL. The remote's configuration is
-# the image's own /etc/flatpak/remotes.d/<name>.flatpakrepo, so every remote
-# the content uses must be in flatpak-remotes (FLATPAK_REMOTES). A bundle
+# remote is then pointed back at its real URL. Remotes come from the image's
+# own /etc/flatpak/remotes.d, applied by flatpak in the guest as it would on
+# the device, so every remote the content uses must be in flatpak-remotes
+# (FLATPAK_REMOTES), and the device has nothing left to apply. A bundle
 # installs under the origin remote it carries.
 #
 # An installation already in the rootfs is kept: the guest starts from it and
@@ -177,19 +178,20 @@ def flatpak_guest_script(d, remotes, bundles):
         'remote_config() { ostree --repo="$repo" config "$1" "remote \\"$2\\".$3" ${4:+"$4"}; }',
         # Filters are referenced by absolute path from the .flatpakrepo files.
         'if [ -d "$in/filters" ]; then mkdir -p /etc/flatpak/filters && cp "$in"/filters/* /etc/flatpak/filters/; fi',
+        # The image's remotes.d, applied by flatpak itself the first time it
+        # opens the installation, as on the device: each file becomes a
+        # remote unless one of that name exists, and is recorded as applied.
+        # One left unapplied would make the first unprivileged flatpak
+        # command on the device need root to apply it.
+        'if [ -d "$in/remotes.d" ]; then mkdir -p /etc/flatpak/remotes.d && cp "$in"/remotes.d/* /etc/flatpak/remotes.d/; fi',
+        'flatpak remotes --system --show-disabled --columns=name > /tmp/remotes',
     ]
 
-    # The image's own remote configuration, unless the installation already
-    # has a remote of that name, which is what flatpak does with remotes.d.
     for i, remote in enumerate(remotes):
         r = quote(remote)
         lines += [
             'echo "vfpk: remote %s"' % r,
-            # remote-add fetches the remote's metadata, which cannot work in
-            # the offline guest; drop that warning, keep anything else.
-            'flatpak remote-add --system --if-not-exists --from %s "$in/remotes.d/"%s.flatpakrepo '
-                '> /tmp/remote-add.log 2>&1 || { cat /tmp/remote-add.log; exit 1; }' % (r, r),
-            'grep -v "^Warning: Could not update extra metadata" /tmp/remote-add.log || true',
+            'grep -qx %s /tmp/remotes || { echo "vfpk: the installation has no remote %s"; exit 1; }' % (r, r),
             'url_%d=$(remote_config get %s url)' % (i, r),
             # A packaged repository's summary is regenerated, so unsigned;
             # commit signatures are still verified.
@@ -398,10 +400,11 @@ python flatpak_cross_install () {
             bb.fatal("flatpak content for remote '%s' (%s), but the image has no %s; add '%s' to "
                      "FLATPAK_REMOTES and flatpak-remotes to the image"
                      % (remote, ' '.join(sorted({owner[r] for r in remotes[remote]})), src, remote))
-        bb.utils.mkdirhier(os.path.join(stage, 'remotes.d'))
-        shutil.copy(src, os.path.join(stage, 'remotes.d'))
+    # All of them, used or not: see flatpak_guest_script.
+    if os.path.isdir(remotes_d):
+        shutil.copytree(remotes_d, os.path.join(stage, 'remotes.d'))
     filters = os.path.join(rootfs + d.getVar('sysconfdir'), 'flatpak', 'filters')
-    if remotes and os.path.isdir(filters):
+    if os.path.isdir(filters):
         shutil.copytree(filters, os.path.join(stage, 'filters'))
 
     ostree = os.path.join(d.getVar('STAGING_BINDIR_NATIVE'), 'ostree')
@@ -409,6 +412,8 @@ python flatpak_cross_install () {
         repo = os.path.join(stage, 'repos', remote)
         bb.utils.mkdirhier(repo)
         flatpak_run(d, [ostree, '--repo=%s' % repo, 'init', '--mode=archive'])
+        flatpak_run(d, [ostree, '--repo=%s' % repo, 'config', 'set', 'core.min-free-space-size',
+                        d.getVar('FLATPAK_REPO_MIN_FREE')])
         for b in bundles:
             if b['kind'] == 'repo' and b['remote'] == remote:
                 # Same filesystem and repository mode: objects are hardlinked.

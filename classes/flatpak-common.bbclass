@@ -43,6 +43,11 @@ VFPK_BLOB_DIR = "${VFPK_TMPDIR}/deploy/images/${VFPK_MACHINE}/vfpk/${FLATPAK_ARC
 # collects it and removes it from the image.
 FLATPAK_BUNDLES_DIR = "${datadir}/flatpak-bundles"
 
+# Free space every ostree repository the layer writes must leave on its
+# filesystem. ostree's default is 3% of the filesystem, which on a large
+# shared build disk refuses writes with plenty of room left.
+FLATPAK_REPO_MIN_FREE ??= "1GB"
+
 # Where the installation built in the guest ends up:
 #   rootfs    - unpacked into ${IMAGE_ROOTFS}/var/lib/flatpak. Only valid when
 #               the rootfs is writable at runtime.

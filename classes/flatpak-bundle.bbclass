@@ -152,6 +152,8 @@ python flatpak_bundle_mirror () {
     try:
         if not os.path.exists(os.path.join(repo, 'config')):
             flatpak_bundle_ostree(d, ['--repo=%s' % repo, 'init', '--mode=archive'])
+        flatpak_bundle_ostree(d, ['--repo=%s' % repo, 'config', 'set', 'core.min-free-space-size',
+                                  d.getVar('FLATPAK_REPO_MIN_FREE')])
 
         # Reconfigure the remote every time, so a changed URL or key in the
         # recipe takes effect and a stale one cannot verify anything.
@@ -192,6 +194,7 @@ do_compile () {
     if [ -n "${FLATPAK_REMOTE_REFS}" ]; then
         mirror=${FLATPAK_MIRROR_DIR}/${FLATPAK_REMOTE}/repo
         ostree --repo=${B}/repo init --mode=archive
+        ostree --repo=${B}/repo config set core.min-free-space-size ${FLATPAK_REPO_MIN_FREE}
         for entry in ${FLATPAK_REMOTE_REFS}; do
             ref=${entry%@*}
             commit=${entry#*@}
