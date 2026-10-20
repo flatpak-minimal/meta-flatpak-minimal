@@ -82,6 +82,36 @@ deploy mode:
 | `partition` | An ext4 image placed by wic as the partition mounted at `/var/lib/flatpak`. Default with `read-only-rootfs`. |
 | `seed` | A tar in the rootfs, unpacked into the writable `/var/lib/flatpak` on first boot. |
 
+### The guest
+
+The guest is built by its own distro, `vfpk`, through one multiconfig per
+architecture:
+
+```
+BBMULTICONFIG = "vfpk-aarch64 vfpk-x86-64 vfpk-riscv64 vfpk-arm"
+```
+
+Only the entry for the image's own architecture is needed. Each multiconfig
+has its own `TMPDIR` (`tmp-vfpk-<arch>`) and builds a kernel, a tiny initramfs
+and a squashfs root filesystem with flatpak, ostree and bubblewrap;
+`vfpk-initramfs-create` collects them into
+`tmp-vfpk-<arch>/deploy/images/<machine>/vfpk/<arch>/`. In the guest, flatpak
+is built without its polkit system helper: it runs as root and never needs
+it. Nothing in the `vfpk` distro changes other builds.
+
+`vfpk-runner.sh`, installed by `vfpk-native`, boots that guest with QEMU (KVM
+when the guest is the host's own architecture, TCG otherwise), runs one
+command as root and collects `/var/lib/flatpak` as a tar. All exchange with
+the guest goes through virtio disks, so QEMU needs no virtfs support. A boot
+takes a few seconds even under TCG.
+
+```
+bitbake mc:vfpk-aarch64:vfpk-initramfs-create vfpk-native
+vfpk-runner.sh --arch aarch64 \
+    --blob-dir tmp-vfpk-aarch64/deploy/images/qemuarm64/vfpk/aarch64 \
+    --input DIR --output installation.tar -- 'flatpak install --system ...'
+```
+
 ## Remotes
 
 `flatpak-remotes` writes one `/etc/flatpak/remotes.d/<name>.flatpakrepo` per
