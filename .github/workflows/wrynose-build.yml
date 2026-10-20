@@ -257,6 +257,29 @@ jobs:
           bitbake --runall=fetch "$APP"
           BB_NO_NETWORK=1 bitbake "$APP"
 
+      # flatpak-minimal-image with the vfpk test runtime and app installed at
+      # build time, booted under testimage. Its configuration is appended
+      # here, last, so every step above builds exactly what meta-flutter's CI
+      # builds; it needs none of their output, so it runs even if a Flutter
+      # step failed. See conf/include/vfpk-testimage.inc.
+      - name: Test flatpak-minimal-image
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ../wrynose-linux-dummy
+        run: |
+          . ./openembedded-core/oe-init-build-env
+          case "${{ env.MACHINE }}" in
+              qemuarm64) mc=vfpk-aarch64 ;;
+              qemux86-64) mc=vfpk-x86-64 ;;
+              qemuriscv64) mc=vfpk-riscv64 ;;
+              qemuarm) mc=vfpk-arm ;;
+              *) echo "::error::no vfpk multiconfig for ${{ env.MACHINE }}"; exit 1 ;;
+          esac
+          echo "BBMULTICONFIG = \"$mc\"" >> ./conf/local.conf
+          echo 'require conf/include/vfpk-testimage.inc' >> ./conf/local.conf
+          bitbake flatpak-minimal-image
+          bitbake flatpak-minimal-image -c testimage
+
       # Only reached when every step above succeeded; a failed or cancelled run
       # leaves the marker for the next one to act on.
       - name: Mark the build complete

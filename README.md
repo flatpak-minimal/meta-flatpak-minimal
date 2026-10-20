@@ -276,6 +276,29 @@ FLATPAK_APP_ID = "org.example.App"
 and runs as `homescreen -b /app/share/flutter/<app>/<version>/release`.
 `flatpak-minimal-appstream-dart-flathub-catalog` is packaged this way.
 
+### Testing
+
+`conf/include/vfpk-testimage.inc` builds `flatpak-minimal-image` with a
+small test runtime and app (`recipes-test/vfpk-test`, buildable for every
+supported architecture) installed at build time, and boots it under
+testimage:
+
+```
+BBMULTICONFIG = "vfpk-aarch64"
+require conf/include/vfpk-testimage.inc
+```
+
+```
+bitbake flatpak-minimal-image -c testimage
+```
+
+The `flatpak` test suite (`lib/oeqa/runtime/cases/flatpak.py`) checks that
+every ref in `/usr/share/vfpk/installed.refs` is deployed at its commit under
+its origin, that the origins are configured remotes, that `flatpak repair`
+is clean and that the test app runs in its sandbox. CI runs it on all four
+machines. The include lets root log in without a password; it is for tests
+only.
+
 ## Remotes
 
 `flatpak-remotes` writes one `/etc/flatpak/remotes.d/<name>.flatpakrepo` per
