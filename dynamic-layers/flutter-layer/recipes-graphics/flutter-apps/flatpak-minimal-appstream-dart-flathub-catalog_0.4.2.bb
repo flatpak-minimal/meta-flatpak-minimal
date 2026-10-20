@@ -25,7 +25,12 @@ FLUTTER_APPLICATION_PATH = "example/flathub_catalog"
 PUBSPEC_APPNAME = "flathub_catalog"
 FLUTTER_APPLICATION_INSTALL_SUFFIX = "appstream-dart-example-flathub-catalog"
 
-inherit flutter-app-native
+inherit flutter-app-native flatpak-flutter-app
+
+# Also packaged as a flatpak app on the Flutter runtime, in ${PN}-flatpak.
+FLATPAK_APP_ID = "org.flatpak_minimal.appstream_dart.example.flathub_catalog"
+# It reads the Flathub catalog over the network.
+FLATPAK_APP_FINISH_ARGS = "--socket=wayland --device=dri --share=ipc --share=network"
 
 # Vendored pub cache: dependencies arrive through SRC_URI with checksums
 # rather than a networked `pub get` during the build. The .inc and the lockfile

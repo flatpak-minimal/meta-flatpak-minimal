@@ -6,7 +6,7 @@
 # Package flatpak content built outside this build so flatpak-cross-install
 # can install it into the image's system installation at build time.
 #
-# A recipe provides one of two kinds of input:
+# A recipe provides one of three kinds of input:
 #
 #   Refs mirrored from a remote, pinned by commit:
 #
@@ -33,12 +33,19 @@
 #   it installs, but can never be updated in the field; flatpak-cross-install
 #   refuses it unless FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1".
 #
-# For mirrored refs, FLATPAK_REMOTE names the remote the content is installed
+#   A runtime built by this build (flatpak-runtime-image):
+#
+#     FLATPAK_IMAGE = "flutter-platform-runtime-image"
+#
+#   The image's deployed repository is copied whole. FLATPAK_REMOTE defaults
+#   to FLATPAK_BUILD_REMOTE.
+#
+# For mirrored and built refs, FLATPAK_REMOTE names the remote the content is installed
 # under, and so the origin it is updated from on the device. It must match a
 # remote shipped by flatpak-remotes.
 #
 # The package carries, under ${datadir}/flatpak-bundles:
-#   repos/${PN}/          ostree archive repository (mirrored refs)
+#   repos/${PN}/          ostree archive repository (mirrored or built refs)
 #   bundles/${PN}/FILE    the bundle (bundle input)
 #   ${PN}.refs            one "REF COMMIT" line per ref ("-" for a bundle)
 #   ${PN}.meta            key=value properties for flatpak-cross-install
@@ -52,6 +59,10 @@ FLATPAK_REMOTE_REFS ??= ""
 FLATPAK_BUNDLE_FILE ??= ""
 FLATPAK_BUNDLE_REF ??= ""
 FLATPAK_BUNDLE_ALLOW_NO_ORIGIN ??= "0"
+FLATPAK_IMAGE ??= ""
+FLATPAK_BUILD_REMOTE ??= ""
+# The default deploy name of an image (image-artifact-names.bbclass).
+FLATPAK_IMAGE_REPO ??= "${DEPLOY_DIR_IMAGE}/${FLATPAK_IMAGE}-${MACHINE}.rootfs.flatpakrepo"
 
 # Flathub's CDN refuses requests whose user agent names libostree, which is
 # ostree's default.
@@ -70,13 +81,28 @@ python () {
 
     refs = (d.getVar('FLATPAK_REMOTE_REFS') or '').split()
     bundle = d.getVar('FLATPAK_BUNDLE_FILE')
+    image = d.getVar('FLATPAK_IMAGE')
     remote = d.getVar('FLATPAK_REMOTE')
 
-    if refs and bundle:
-        bb.fatal("set only one of FLATPAK_REMOTE_REFS and FLATPAK_BUNDLE_FILE")
-    if not refs and not bundle:
+    if len([x for x in (refs, bundle, image) if x]) > 1:
+        bb.fatal("set only one of FLATPAK_REMOTE_REFS, FLATPAK_BUNDLE_FILE and FLATPAK_IMAGE")
+    if not refs and not bundle and not image:
         # Usually refs pinned only for some architectures through overrides.
         raise bb.parse.SkipRecipe("no flatpak content for flatpak arch %s" % d.getVar('FLATPAK_ARCH'))
+
+    if image:
+        if not remote:
+            remote = d.getVar('FLATPAK_BUILD_REMOTE')
+            if not remote:
+                raise bb.parse.SkipRecipe("set FLATPAK_BUILD_REMOTE to the remote refs built here "
+                                          "install under")
+            d.setVar('FLATPAK_REMOTE', remote)
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', remote):
+            bb.fatal("FLATPAK_REMOTE '%s' is not a remote name" % remote)
+        d.appendVarFlag('do_compile', 'depends', ' %s:do_image_complete' % image)
+        # The image is built for this machine.
+        d.setVar('PACKAGE_ARCH', d.getVar('MACHINE_ARCH'))
+        return
 
     ref_re = r'(app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_]+/[A-Za-z0-9._-]+'
     if bundle:
@@ -205,6 +231,19 @@ do_compile () {
         done
         ostree --repo=${B}/repo summary --update
         ostree --repo=${B}/repo fsck --quiet
+    elif [ -n "${FLATPAK_IMAGE}" ]; then
+        src=${FLATPAK_IMAGE_REPO}
+        [ -f $src/config ] || bbfatal "${FLATPAK_IMAGE} deployed no flatpak repository at $src"
+        ostree --repo=${B}/repo init --mode=archive
+        ostree --repo=${B}/repo config set core.min-free-space-size ${FLATPAK_REPO_MIN_FREE}
+        for ref in $(ostree --repo=$src refs); do
+            commit=$(ostree --repo=$src rev-parse $ref)
+            ostree --repo=${B}/repo pull-local --depth=0 $src $ref
+            echo "$ref $commit" >> ${B}/refs
+        done
+        [ -s ${B}/refs ] || bbfatal "$src holds no refs"
+        ostree --repo=${B}/repo summary --update
+        ostree --repo=${B}/repo fsck --quiet
     else
         [ -f ${UNPACKDIR}/${FLATPAK_BUNDLE_FILE} ] || bbfatal "bundle ${FLATPAK_BUNDLE_FILE} not found in UNPACKDIR"
         echo "${FLATPAK_BUNDLE_REF} -" > ${B}/refs
@@ -214,7 +253,7 @@ do_compile () {
 do_install () {
     dest=${D}${FLATPAK_BUNDLES_DIR}
     install -d $dest
-    if [ -n "${FLATPAK_REMOTE_REFS}" ]; then
+    if [ -n "${FLATPAK_REMOTE_REFS}${FLATPAK_IMAGE}" ]; then
         install -d $dest/repos
         cp -R --no-preserve=ownership ${B}/repo $dest/repos/${PN}
         kind=repo
@@ -230,7 +269,7 @@ do_install () {
     chmod 0644 $dest/${PN}.meta
 }
 
-do_compile[vardeps] += "FLATPAK_REMOTE_REFS FLATPAK_REMOTE FLATPAK_BUNDLE_FILE FLATPAK_BUNDLE_REF"
+do_compile[vardeps] += "FLATPAK_REMOTE_REFS FLATPAK_REMOTE FLATPAK_BUNDLE_FILE FLATPAK_BUNDLE_REF FLATPAK_IMAGE"
 do_install[vardeps] += "FLATPAK_BUNDLE_ALLOW_NO_ORIGIN"
 
 do_configure[noexec] = "1"

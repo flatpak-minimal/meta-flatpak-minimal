@@ -195,6 +195,50 @@ BBMULTICONFIG = "vfpk-aarch64"
 BUNDLED_FLATPAKS:pn-flatpak-minimal-image = "flathub-freedesktop-platform flutter-remote-manager"
 ```
 
+### Flatpak content built by this build
+
+Two classes turn build output into flatpak refs, committed with ostree-native
+into ostree repositories:
+
+- `flatpak-runtime-image` makes an image a runtime: its `/usr` becomes the
+  runtime's files and its `/etc` the runtime's `/etc`, with the linker setup
+  flatpak expects (`bin/ldconfig`, and app library paths in `ld.so.conf`
+  ahead of the image's own). It needs `usrmerge`. The repository is
+  deployed as `<image>-<machine>.rootfs.flatpakrepo`, and a flatpak-bundle
+  recipe with `FLATPAK_IMAGE = "<image>"` packages it.
+- `flatpak-app` (generic) and `flatpak-flutter-app` (meta-flutter apps) add a
+  `${PN}-flatpak` package to an app recipe, holding an app ref made from part
+  of what the recipe installs. `${prefix}` maps to `/app`, so installed paths
+  keep working, and links into the rest of `${prefix}` resolve in the runtime.
+
+Both kinds of package install through `flatpak-cross-install` like any other
+bundle: `IMAGE_INSTALL += "<app>-flatpak"` or `BUNDLED_FLATPAKS`. The app
+package depends on its runtime's package.
+
+Refs built here install under `FLATPAK_BUILD_REMOTE`, which must be in
+`FLATPAK_REMOTES`; publish the deployed repositories there so devices can
+update. `FLATPAK_GPGID` and `FLATPAK_GPGHOME` sign the commits; without them
+the remote needs `FLATPAK_REMOTE_NO_GPG`. Commits are timestamped with
+`SOURCE_DATE_EPOCH`.
+
+With meta-flutter, the layer provides the Flutter runtime:
+
+| Recipe | Content |
+| --- | --- |
+| `flutter-platform-runtime-image` | `runtime/org.flatpak_minimal.Flutter.Platform/<arch>/<flutter version>`: flutter-engine, ivi-homescreen, Mesa, fonts |
+| `flutter-platform-runtime` | that runtime, packaged |
+
+The branch is the Flutter SDK version, so an app's AOT code always meets the
+engine it was compiled for. A Flutter app opts in with:
+
+```
+inherit flutter-app-native flatpak-flutter-app
+FLATPAK_APP_ID = "org.example.App"
+```
+
+and runs as `homescreen -b /app/share/flutter/<app>/<version>/release`.
+`flatpak-minimal-appstream-dart-flathub-catalog` is packaged this way.
+
 ## Remotes
 
 `flatpak-remotes` writes one `/etc/flatpak/remotes.d/<name>.flatpakrepo` per
