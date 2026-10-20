@@ -14,6 +14,7 @@ packages.
 | `flatpak-minimal-flatpak-dart-flutter-remote-manager` | [flatpak_dart](https://github.com/flatpak-minimal/flatpak_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-minimal-appstream-dart-flathub-catalog` | [appstream_dart](https://github.com/flatpak-minimal/appstream_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-remotes` | (this layer) | System flatpak remotes as static `/etc/flatpak/remotes.d` entries. Flathub by default. |
+| `vfpk-seed` | (this layer) | First-boot unpacker for `FLATPAK_DEPLOY_MODE = "seed"`; added by `flatpak-cross-install`. |
 | `flatpak-minimal-image` | (this layer) | Reference image: flatpak plus `flatpak-remotes`; installs `BUNDLED_FLATPAKS` at build time. |
 
 The two Flutter recipes live under `dynamic-layers/flutter-layer/` and only
@@ -74,7 +75,7 @@ flatpak, installs the requested refs into a system installation
 
 The work is in progress. `classes/flatpak-common.bbclass` holds the
 per-architecture guest table (aarch64, x86-64, riscv64 and 32-bit arm) and the
-deploy mode (only `rootfs` is implemented so far):
+deploy mode:
 
 | `FLATPAK_DEPLOY_MODE` | Where the installation goes |
 | --- | --- |
@@ -194,6 +195,42 @@ To try it on qemuarm64:
 BBMULTICONFIG = "vfpk-aarch64"
 BUNDLED_FLATPAKS:pn-flatpak-minimal-image = "flathub-freedesktop-platform flutter-remote-manager"
 ```
+
+### Read-only rootfs: partition and seed
+
+flatpak can only update an installation it can write, so a read-only rootfs
+needs `/var/lib/flatpak` on writable storage. With `read-only-rootfs` in
+`IMAGE_FEATURES`, `FLATPAK_DEPLOY_MODE` defaults to `partition`:
+
+- The installation is built as an ext4 image, deployed as
+  `<image>-<machine>.rootfs.vfpk-data.ext4` (`FLATPAK_DATA_IMAGE`), labeled
+  `flatpak` (`FLATPAK_DATA_LABEL`), with `FLATPAK_DATA_EXTRA_SPACE` MB
+  (default 1024) of room for updates, or a fixed `FLATPAK_DATA_SIZE` MB. The
+  same input gives the same image: its UUID, hash seed and timestamps are
+  fixed.
+- The rootfs keeps an empty `/var/lib/flatpak` and an fstab entry mounting
+  the labeled filesystem there. The entry is ordered after `volatile-binds`,
+  which otherwise mounts a RAM copy of `/var/lib` over the partition and
+  silently discards updates.
+- Place the image with wic, from a `.wks.in`:
+
+  ```
+  part /var/lib/flatpak --source rawcopy --fstype=ext4 --no-fstab-update --sourceparams="file=${FLATPAK_DATA_IMAGE}" --label flatpak
+  ```
+
+  or with whatever lays out the product's storage. An OS update rewrites the
+  rootfs and leaves the partition, and the apps updated on it, alone.
+
+`seed` puts the installation in the rootfs as a tar
+(`/usr/share/vfpk/seed.tar`), and `vfpk-seed.service` unpacks it into
+`/var/lib/flatpak` on first boot. It never unpacks over an existing
+installation, so an OS update with a newer seed keeps what the user updated.
+On a read-only rootfs, mount persistent storage at `/var/lib/flatpak` with
+`FLATPAK_DATA_FSTAB`, or the seed is unpacked into RAM on every boot.
+
+flatpak lets an unprivileged user update system apps through polkit when
+the user has an active local session (a desktop or kiosk session on a seat).
+Anything else, such as a background updater, needs a polkit rule.
 
 ### Flatpak content built by this build
 

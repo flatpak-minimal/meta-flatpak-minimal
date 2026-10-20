@@ -33,7 +33,31 @@
 #
 # An installation already in the rootfs is kept: the guest starts from it and
 # adds to it. The resulting refs are listed, one "REF ORIGIN COMMIT" per
-# line, in ${FLATPAK_INSTALLED_REFS} for launchers.
+# line, in ${FLATPAK_INSTALLED_REFS} for launchers. It records what the build
+# installed; on a device that has updated since, flatpak itself is current.
+#
+# Where the installation goes follows FLATPAK_DEPLOY_MODE (flatpak-common):
+#
+#   rootfs     ${localstatedir}/lib/flatpak in the rootfs.
+#   partition  an ext4 image deployed as ${IMAGE_LINK_NAME}.vfpk-data.ext4
+#              (FLATPAK_DATA_IMAGE), labeled FLATPAK_DATA_LABEL, with room
+#              for FLATPAK_DATA_EXTRA_SPACE MB of updates or a fixed
+#              FLATPAK_DATA_SIZE MB. Place it as the partition mounted at
+#              /var/lib/flatpak, e.g. from a .wks.in:
+#                part /var/lib/flatpak --source rawcopy --fstype=ext4 --no-fstab-update
+#                     --sourceparams="file=${FLATPAK_DATA_IMAGE}" --label flatpak
+#              It is built even without flatpak content, so the layout holds.
+#   seed       a tar at ${FLATPAK_SEED}, unpacked into the writable
+#              /var/lib/flatpak on first boot by vfpk-seed.service, which
+#              the class adds to the image. It never unpacks over an
+#              existing installation, so updates made in the field survive
+#              an OS update that brings a newer seed.
+#
+# In partition and seed modes the rootfs keeps an empty /var/lib/flatpak as
+# the mount point, and FLATPAK_DATA_FSTAB (for partition, a mount of the
+# FLATPAK_DATA_LABEL filesystem) is added to /etc/fstab. Seed mode on a
+# read-only rootfs needs that mount too: without persistent storage at
+# /var/lib/flatpak the seed lands in RAM and is unpacked again every boot.
 #
 # Needs the vfpk-<arch> multiconfig for the image's architecture in
 # BBMULTICONFIG (see conf/multiconfig). An image without flatpak content
@@ -47,6 +71,21 @@ FLATPAK_APP_USER ??= ""
 FLATPAK_APP_ENV ??= ""
 
 FLATPAK_INSTALLED_REFS = "${datadir}/vfpk/installed.refs"
+
+FLATPAK_DATA_IMAGE = "${IMGDEPLOYDIR}/${IMAGE_NAME}.vfpk-data.ext4"
+FLATPAK_DATA_LABEL ??= "flatpak"
+FLATPAK_DATA_EXTRA_SPACE ??= "1024"
+FLATPAK_DATA_SIZE ??= ""
+# Empty derives a fixed UUID from the image name and machine.
+FLATPAK_DATA_UUID ??= ""
+# On a read-only rootfs, volatile-binds makes ${localstatedir}/lib writable
+# with an overlay or a tmpfs copy mounted over it. Mounted first, the data
+# partition ends up underneath, and flatpak writes to a copy in RAM that is
+# gone at the next boot, so mount it after. Ordering against a unit that does
+# not exist is a no-op.
+FLATPAK_DATA_FSTAB_OPTIONS ??= "defaults,x-systemd.after=var-volatile-lib.service"
+FLATPAK_DATA_FSTAB ??= "${@'LABEL=%s %s/lib/flatpak ext4 %s 0 2' % (d.getVar('FLATPAK_DATA_LABEL'), d.getVar('localstatedir'), d.getVar('FLATPAK_DATA_FSTAB_OPTIONS')) if d.getVar('FLATPAK_DEPLOY_MODE') == 'partition' else ''}"
+FLATPAK_SEED = "${datadir}/vfpk/seed.tar"
 
 # Guest timeout in seconds; empty derives it from the size of the content.
 FLATPAK_INSTALL_TIMEOUT ??= ""
@@ -70,6 +109,20 @@ python () {
     if have_mc:
         d.appendVarFlag('do_rootfs', 'mcdepends',
                         ' mc:%s:%s:vfpk-initramfs-create:do_deploy' % (d.getVar('BB_CURRENT_MC'), mc))
+
+    mode = d.getVar('FLATPAK_DEPLOY_MODE')
+    if mode == 'seed':
+        if not bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d):
+            bb.fatal("FLATPAK_DEPLOY_MODE = \"seed\" needs systemd in DISTRO_FEATURES for vfpk-seed.service")
+        d.appendVar('IMAGE_INSTALL', ' vfpk-seed')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,16}', d.getVar('FLATPAK_DATA_LABEL') or ''):
+        bb.fatal("FLATPAK_DATA_LABEL '%s' is not an ext4 label (up to 16 of A-Z a-z 0-9 _ -)"
+                 % d.getVar('FLATPAK_DATA_LABEL'))
+    for var in ('FLATPAK_DATA_EXTRA_SPACE', 'FLATPAK_DATA_SIZE'):
+        if not re.fullmatch(r'[0-9]*', d.getVar(var) or ''):
+            bb.fatal("%s must be a number of MB" % var)
+    if '\n' in (d.getVar('FLATPAK_DATA_FSTAB') or ''):
+        bb.fatal("FLATPAK_DATA_FSTAB must be one fstab line")
 
     for entry in entries:
         fields = entry.split(':')
@@ -95,7 +148,8 @@ ROOTFS_POSTPROCESS_COMMAND += "flatpak_cross_install"
 ROOTFS_POSTPROCESS_COMMAND:append = " flatpak_autostart_units"
 
 do_rootfs[vardeps] += "BUNDLED_FLATPAKS FLATPAK_DEPLOY_MODE FLATPAK_APP_USER FLATPAK_APP_ENV \
-    FLATPAK_SERVICE_FILE FLATPAK_INSTALL_TIMEOUT FLATPAK_INSTALL_MEMORY"
+    FLATPAK_SERVICE_FILE FLATPAK_INSTALL_TIMEOUT FLATPAK_INSTALL_MEMORY FLATPAK_DATA_LABEL \
+    FLATPAK_DATA_EXTRA_SPACE FLATPAK_DATA_SIZE FLATPAK_DATA_UUID FLATPAK_DATA_FSTAB FLATPAK_SEED"
 # Tuning only; the result does not depend on it.
 flatpak_cross_install[vardepsexclude] += "FLATPAK_INSTALL_SMP"
 
@@ -238,17 +292,17 @@ def flatpak_guest_script(d, remotes, bundles):
                          'FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = \\"1\\" in %s to install it anyway"; exit 1; }'
                          % (quote(ref), quote(b['pn'])))
 
-    # flatpak list shortens refs and commits, so ask for each one.
+    # flatpak list shortens refs and commits, so ask for each one. The list
+    # goes to the output, not into the installation.
     lines += [
-        'out=/var/lib/flatpak/.vfpk-installed.refs',
-        ': > "$out"',
+        'echo "===VFPK_REFS_BEGIN==="',
         'for kind in app runtime; do',
         '    for ref in $(flatpak list --system --$kind --columns=ref); do',
         '        echo "$kind/$ref $(flatpak info --system --show-origin "$kind/$ref") '
-        '$(flatpak info --system --show-commit "$kind/$ref")" >> "$out"',
+        '$(flatpak info --system --show-commit "$kind/$ref")"',
         '    done',
         'done',
-        'cat "$out"',
+        'echo "===VFPK_REFS_END==="',
     ]
     return '\n'.join(lines) + '\n'
 
@@ -346,6 +400,83 @@ python flatpak_autostart_units () {
             os.symlink(os.path.join(unitdir, name), link)
 }
 
+def flatpak_installed_refs(d, output):
+    """The guest's list of installed refs, checked line by line."""
+    import re
+    lines = output.splitlines()
+    try:
+        begin = lines.index('===VFPK_REFS_BEGIN===')
+        end = lines.index('===VFPK_REFS_END===', begin)
+    except ValueError:
+        bb.fatal("the vfpk guest reported no list of installed refs")
+    refs = lines[begin + 1:end]
+    for line in refs:
+        if not re.fullmatch(r'%s %s [0-9a-f]{64}' % (d.getVar('FLATPAK_REF_RE'), d.getVar('FLATPAK_NAME_RE')), line):
+            bb.fatal("the vfpk guest reported a bad installed ref: '%s'" % line)
+    return refs
+
+def flatpak_make_data_image(d, tree):
+    """Build the ext4 partition image of FLATPAK_DEPLOY_MODE = "partition" from TREE."""
+    import math
+    import uuid
+
+    image = d.getVar('FLATPAK_DATA_IMAGE')
+    # Every file and directory takes whole blocks; ostree repositories hold
+    # many small files.
+    used = 0
+    for top, dirs, names in os.walk(tree):
+        for name in dirs + names:
+            used += max(4096, math.ceil(os.lstat(os.path.join(top, name)).st_size / 4096) * 4096)
+    size_mb = math.ceil(used * 1.25 / (1 << 20)) + 128 + int(d.getVar('FLATPAK_DATA_EXTRA_SPACE'))
+    size = d.getVar('FLATPAK_DATA_SIZE')
+    if size:
+        if int(size) < size_mb - int(d.getVar('FLATPAK_DATA_EXTRA_SPACE')):
+            bb.fatal("FLATPAK_DATA_SIZE %s MB is too small for the installation (%d MB)"
+                     % (size, size_mb - int(d.getVar('FLATPAK_DATA_EXTRA_SPACE'))))
+        size_mb = int(size)
+
+    # Same input, same image: fixed UUID, hash seed and timestamps.
+    fs_uuid = d.getVar('FLATPAK_DATA_UUID') or \
+        str(uuid.uuid5(uuid.NAMESPACE_URL, 'vfpk-data:%s:%s' % (d.getVar('PN'), d.getVar('MACHINE'))))
+    epoch = d.getVar('SOURCE_DATE_EPOCH') or '0'
+    bb.utils.remove(image)
+    # Under pseudo: mke2fs records the image's owners, not the build user's.
+    flatpak_run(d, ['env', 'E2FSPROGS_FAKE_TIME=%s' % epoch, 'SOURCE_DATE_EPOCH=%s' % epoch,
+                    'mke2fs', '-q', '-F', '-t', 'ext4', '-i', '4096', '-m', '0',
+                    '-L', d.getVar('FLATPAK_DATA_LABEL'), '-U', fs_uuid,
+                    '-E', 'hash_seed=%s,root_owner=0:0' % fs_uuid,
+                    '-d', tree, image, '%dM' % size_mb], unload_pseudo=False)
+    flatpak_run(d, ['e2fsck', '-fn', image], unload_pseudo=False)
+    link = d.getVar('IMAGE_LINK_NAME')
+    if link:
+        path = os.path.join(d.getVar('IMGDEPLOYDIR'), link + '.vfpk-data.ext4')
+        if os.path.lexists(path):
+            os.unlink(path)
+        os.symlink(os.path.basename(image), path)
+    bb.note("Built %s (%d MB, label %s)" % (image, size_mb, d.getVar('FLATPAK_DATA_LABEL')))
+
+def flatpak_deploy(d, installation):
+    """Move the installation in the rootfs where FLATPAK_DEPLOY_MODE says."""
+    rootfs = d.getVar('IMAGE_ROOTFS')
+    mode = d.getVar('FLATPAK_DEPLOY_MODE')
+    bb.utils.mkdirhier(installation)
+    if mode == 'partition':
+        flatpak_make_data_image(d, installation)
+    elif mode == 'seed' and os.listdir(installation):
+        seed = rootfs + d.getVar('FLATPAK_SEED')
+        bb.utils.mkdirhier(os.path.dirname(seed))
+        flatpak_run(d, ['tar', '--numeric-owner', '-cf', seed, '-C', installation, '.'], unload_pseudo=False)
+        os.chmod(seed, 0o644)
+    if mode != 'rootfs':
+        # Left as the mount point of the writable storage.
+        bb.utils.remove(installation, recurse=True)
+        bb.utils.mkdirhier(installation)
+
+    entry = d.getVar('FLATPAK_DATA_FSTAB')
+    if entry:
+        with open(os.path.join(rootfs + d.getVar('sysconfdir'), 'fstab'), 'a') as f:
+            f.write(entry + '\n')
+
 FLATPAK_TMP = "${WORKDIR}/vfpk-tmp"
 FLATPAK_AUTOSTART = "${WORKDIR}/vfpk-autostart.json"
 
@@ -363,12 +494,13 @@ python flatpak_cross_install () {
     with open(d.getVar('FLATPAK_AUTOSTART'), 'w') as f:
         json.dump(flatpak_autostart_apps(d, bundles), f)
 
+    installation = rootfs + d.getVar('localstatedir') + '/lib/flatpak'
     if not bundles:
+        # A partition layout expects its partition whether or not anything
+        # was installed.
+        flatpak_deploy(d, installation)
         return
 
-    mode = d.getVar('FLATPAK_DEPLOY_MODE')
-    if mode != 'rootfs':
-        bb.fatal("FLATPAK_DEPLOY_MODE '%s' is not implemented yet; only 'rootfs' is" % mode)
     mc = d.getVar('VFPK_MULTICONFIG')
     if mc not in (d.getVar('BBMULTICONFIG') or '').split():
         bb.fatal("the image installs flatpak content (%s), which needs the vfpk guest: add %s "
@@ -433,7 +565,6 @@ python flatpak_cross_install () {
     with open(os.path.join(stage, 'install.sh'), 'w') as f:
         f.write(flatpak_guest_script(d, remotes, [b for b in bundles if b['kind'] == 'bundle']))
 
-    installation = rootfs + d.getVar('localstatedir') + '/lib/flatpak'
     storage = os.path.join(tmp, 'storage.tar')
     args = [os.path.join(d.getVar('STAGING_BINDIR_NATIVE'), 'vfpk-runner.sh'),
             '--arch', d.getVar('FLATPAK_ARCH'), '--blob-dir', d.getVar('VFPK_BLOB_DIR'),
@@ -459,16 +590,21 @@ python flatpak_cross_install () {
     args += ['--timeout', timeout, '--', 'sh "$VFPK_INPUT/install.sh"']
 
     bb.note("Installing %s in the vfpk guest" % ' '.join(b['pn'] for b in bundles))
-    bb.note(flatpak_run(d, args))
+    output = flatpak_run(d, args)
+    bb.note(output)
+    installed = flatpak_installed_refs(d, output)
 
     if os.path.lexists(installation):
         bb.utils.remove(installation, recurse=True)
     bb.utils.mkdirhier(installation)
     flatpak_run(d, ['tar', '--numeric-owner', '-xf', storage, '-C', installation], unload_pseudo=False)
+    bb.utils.remove(storage)
+    flatpak_deploy(d, installation)
 
     refs_file = rootfs + d.getVar('FLATPAK_INSTALLED_REFS')
     bb.utils.mkdirhier(os.path.dirname(refs_file))
-    os.rename(os.path.join(installation, '.vfpk-installed.refs'), refs_file)
+    with open(refs_file, 'w') as f:
+        f.write(''.join(line + '\n' for line in installed))
     os.chmod(refs_file, 0o644)
 
     # The bundles are installed; the packages that carried them leave nothing

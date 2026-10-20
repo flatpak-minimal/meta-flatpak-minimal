@@ -1,0 +1,16 @@
+[Unit]
+Description=Unpack the flatpak installation seeded at build time
+DefaultDependencies=no
+RequiresMountsFor=@DIR@
+After=local-fs.target
+Before=sysinit.target flatpak-system-helper.service systemd-user-sessions.service
+ConditionPathExists=@SEED@
+ConditionPathExists=!@DIR@/.vfpk-seeded
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@LIBEXECDIR@/vfpk-seed
+
+[Install]
+WantedBy=sysinit.target
