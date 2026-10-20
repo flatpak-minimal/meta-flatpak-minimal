@@ -39,6 +39,10 @@ VFPK_KERNEL_IMAGETYPE = "${@vfpk_arch_field(d, 4)}"
 VFPK_TMPDIR = "${TOPDIR}/tmp-${VFPK_MULTICONFIG}"
 VFPK_BLOB_DIR = "${VFPK_TMPDIR}/deploy/images/${VFPK_MACHINE}/vfpk/${FLATPAK_ARCH}"
 
+# flatpak-bundle packages install their content here; flatpak-cross-install
+# collects it and removes it from the image.
+FLATPAK_BUNDLES_DIR = "${datadir}/flatpak-bundles"
+
 # Where the installation built in the guest ends up:
 #   rootfs    - unpacked into ${IMAGE_ROOTFS}/var/lib/flatpak. Only valid when
 #               the rootfs is writable at runtime.

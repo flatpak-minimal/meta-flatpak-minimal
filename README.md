@@ -14,7 +14,7 @@ packages.
 | `flatpak-minimal-flatpak-dart-flutter-remote-manager` | [flatpak_dart](https://github.com/flatpak-minimal/flatpak_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-minimal-appstream-dart-flathub-catalog` | [appstream_dart](https://github.com/flatpak-minimal/appstream_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-remotes` | (this layer) | System flatpak remotes as static `/etc/flatpak/remotes.d` entries. Flathub by default. |
-| `flatpak-minimal-image` | (this layer) | Reference image: flatpak plus `flatpak-remotes`. |
+| `flatpak-minimal-image` | (this layer) | Reference image: flatpak plus `flatpak-remotes`; installs `BUNDLED_FLATPAKS` at build time. |
 
 The two Flutter recipes live under `dynamic-layers/flutter-layer/` and only
 parse when `meta-flutter` is in the build. Everything else needs `openembedded-core`
@@ -74,7 +74,7 @@ flatpak, installs the requested refs into a system installation
 
 The work is in progress. `classes/flatpak-common.bbclass` holds the
 per-architecture guest table (aarch64, x86-64, riscv64 and 32-bit arm) and the
-deploy mode:
+deploy mode (only `rootfs` is implemented so far):
 
 | `FLATPAK_DEPLOY_MODE` | Where the installation goes |
 | --- | --- |
@@ -135,8 +135,9 @@ in the package as an ostree repository. Find a commit to pin with
 for plain ostree, so the build pulls by commit, never by name.
 
 A bundle should be built with `flatpak build-bundle --repo-url=...` so the
-installed app can be updated from that remote. One without it installs but
-never updates, and has to be allowed explicitly with
+installed app can be updated from that remote; it installs under that origin,
+so `FLATPAK_REMOTE` does not apply to it. One without it installs but never
+updates, and has to be allowed explicitly with
 `FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1"`.
 
 The layer ships two such recipes, both aarch64 only for now:
@@ -145,6 +146,54 @@ The layer ships two such recipes, both aarch64 only for now:
 | --- | --- |
 | `flathub-freedesktop-platform` | `org.freedesktop.Platform` and its `GL.default` extension, 25.08, pinned |
 | `flutter-remote-manager` | the released `flutter_remote_manager` bundle; built without `--repo-url`, so not updatable |
+
+### Installing flatpak content into an image
+
+An image that inherits `flatpak-cross-install` gets every flatpak-bundle
+package it installs put into its system installation at build time:
+
+```
+inherit flatpak-cross-install
+BUNDLED_FLATPAKS = "flathub-freedesktop-platform flutter-remote-manager"
+```
+
+`BUNDLED_FLATPAKS` adds the packages to `IMAGE_INSTALL`; listing them in
+`IMAGE_INSTALL` directly works too. After the rootfs is assembled, the class
+collects what the packages put under `/usr/share/flatpak-bundles`, boots the
+guest, installs it with flatpak and unpacks the resulting installation into
+`/var/lib/flatpak`. The bundle files themselves do not stay in the image.
+
+- Mirrored refs install under their remote's real name, from a local copy
+  that is then swapped back for the remote's real URL. The remote's
+  configuration is the image's own `/etc/flatpak/remotes.d` entry, so the
+  remote must be in `FLATPAK_REMOTES`, and every installed ref has it as its
+  origin: `flatpak update` works on the device. Commit signatures are checked
+  against the remote's key, and each ref must end up at its pinned commit.
+- A bundle installs under the origin remote it was built with, and fails the
+  build if it has none, unless its recipe allows that.
+- An installation already in the rootfs is kept and added to.
+- `/usr/share/vfpk/installed.refs` lists every installed ref with its origin
+  and commit, for launchers that should not have to query flatpak.
+
+Options follow the package name, separated by colons:
+
+| Option | Effect |
+| --- | --- |
+| `autostart` | Generate and enable `flatpak-app-<ID>.service` for each app in the package. It runs `flatpak run --system <ID>` as `FLATPAK_APP_USER` (required; `FLATPAK_APP_USER[pn]` overrides it), with the `KEY=VALUE` pairs of `FLATPAK_APP_ENV`. `FLATPAK_SERVICE_FILE[pn]`, an absolute path, replaces the generated unit. Needs systemd. |
+| `external` | Do not add the package to `IMAGE_INSTALL`; it reaches the image some other way. |
+
+The image needs `vfpk-<arch>` for its architecture in `BBMULTICONFIG`; an
+image without flatpak content builds without it. The guest boots under TCG
+unless the image is for the build host's architecture, which makes a large
+runtime take a minute or so. `FLATPAK_INSTALL_TIMEOUT` (seconds) and
+`FLATPAK_INSTALL_MEMORY` (MB, default 2048) tune the guest.
+
+To try it on qemuarm64:
+
+```
+BBMULTICONFIG = "vfpk-aarch64"
+BUNDLED_FLATPAKS:pn-flatpak-minimal-image = "flathub-freedesktop-platform flutter-remote-manager"
+```
 
 ## Remotes
 

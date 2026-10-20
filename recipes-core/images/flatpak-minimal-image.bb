@@ -11,7 +11,7 @@ HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
 LICENSE = "MIT"
 
-inherit core-image features_check flatpak-common
+inherit core-image features_check flatpak-cross-install
 
 REQUIRED_DISTRO_FEATURES = "polkit systemd"
 

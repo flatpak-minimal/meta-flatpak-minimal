@@ -29,13 +29,13 @@
 #     FLATPAK_BUNDLE_REF = "app/org.example.App/aarch64/stable"
 #
 #   A bundle built with 'flatpak build-bundle --repo-url=...' carries the
-#   remote it updates from. One built without it installs, but can never be
-#   updated in the field; flatpak-cross-install refuses it unless
-#   FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1".
+#   remote it updates from, and installs under that origin. One built without
+#   it installs, but can never be updated in the field; flatpak-cross-install
+#   refuses it unless FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1".
 #
-# FLATPAK_REMOTE names the remote the content is installed under, and so the
-# origin it is updated from on the device. It must match a remote shipped by
-# flatpak-remotes.
+# For mirrored refs, FLATPAK_REMOTE names the remote the content is installed
+# under, and so the origin it is updated from on the device. It must match a
+# remote shipped by flatpak-remotes.
 #
 # The package carries, under ${datadir}/flatpak-bundles:
 #   repos/${PN}/          ostree archive repository (mirrored refs)
@@ -61,8 +61,6 @@ FLATPAK_MIRROR_USER_AGENT ??= "meta-flatpak-minimal/1.0"
 # object once, and a pinned commit already present is never fetched again.
 FLATPAK_MIRROR_DIR ??= "${DL_DIR}/flatpak-mirror"
 
-FLATPAK_BUNDLES_DIR = "${datadir}/flatpak-bundles"
-
 DEPENDS += "ostree-native"
 
 S = "${UNPACKDIR}"
@@ -79,11 +77,12 @@ python () {
     if not refs and not bundle:
         # Usually refs pinned only for some architectures through overrides.
         raise bb.parse.SkipRecipe("no flatpak content for flatpak arch %s" % d.getVar('FLATPAK_ARCH'))
-    if not remote or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', remote):
-        bb.fatal("FLATPAK_REMOTE must name the remote the content installs under")
 
     ref_re = r'(app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_]+/[A-Za-z0-9._-]+'
     if bundle:
+        if remote:
+            bb.fatal("FLATPAK_REMOTE does not apply to a bundle: it installs under the origin "
+                     "it was built with (flatpak build-bundle --repo-url)")
         if '/' in bundle:
             bb.fatal("FLATPAK_BUNDLE_FILE must be a plain file name")
         if not re.fullmatch(ref_re, d.getVar('FLATPAK_BUNDLE_REF') or ''):
@@ -98,6 +97,9 @@ python () {
             bb.fatal("FLATPAK_REMOTE_REFS: '%s' needs a pinned commit (REF@64-hex-digit checksum)" % entry)
         if ref.split('/')[2] != d.getVar('FLATPAK_ARCH'):
             raise bb.parse.SkipRecipe("%s is not for flatpak arch %s" % (ref, d.getVar('FLATPAK_ARCH')))
+
+    if not remote or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', remote):
+        bb.fatal("FLATPAK_REMOTE must name the remote the content installs under")
 
     url = d.getVar('FLATPAK_REMOTE_URL') or ''
     if not url.startswith('https://'):
@@ -221,7 +223,7 @@ do_install () {
     fi
     install -m 0644 ${B}/refs $dest/${PN}.refs
     printf 'kind=%s\npath=%s\nremote=%s\nallow_no_origin=%s\n' \
-        $kind $path ${FLATPAK_REMOTE} ${FLATPAK_BUNDLE_ALLOW_NO_ORIGIN} > $dest/${PN}.meta
+        "$kind" "$path" "${FLATPAK_REMOTE}" "${FLATPAK_BUNDLE_ALLOW_NO_ORIGIN}" > $dest/${PN}.meta
     chmod 0644 $dest/${PN}.meta
 }
 

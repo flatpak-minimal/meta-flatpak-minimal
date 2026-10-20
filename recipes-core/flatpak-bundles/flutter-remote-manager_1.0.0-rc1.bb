@@ -25,10 +25,6 @@ SRC_URI[sha256sum] = "fc90ffc4c404edfb7521b67a6d0192b708f88aabfa1d858576a250d23e
 
 FLATPAK_BUNDLE_REF = "app/org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager/aarch64/stable"
 
-# The bundle is built against Flathub's runtime, so that is the remote it
-# installs alongside.
-FLATPAK_REMOTE = "flathub"
-
 # The release bundle is built without 'flatpak build-bundle --repo-url', so
 # it carries no remote: it installs and runs, but flatpak cannot update it in
 # the field. Rebuild the release with --repo-url to drop this.
