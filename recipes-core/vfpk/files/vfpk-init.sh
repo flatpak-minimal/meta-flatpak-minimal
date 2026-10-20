@@ -29,6 +29,12 @@ mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=1777 tmpfs /dev/shm
 mount -t tmpfs -o mode=0755 tmpfs /run
 mount -t tmpfs -o mode=1777 tmpfs /tmp
+# /var/tmp and /var/log point into /var/volatile on a Yocto rootfs. flatpak
+# stages bundles in /var/tmp.
+mkdir -p /var/volatile
+mount -t tmpfs -o mode=0755 tmpfs /var/volatile
+mkdir -p /var/volatile/tmp /var/volatile/log
+chmod 1777 /var/volatile/tmp
 ip link set lo up 2>/dev/null
 
 find_disk() {

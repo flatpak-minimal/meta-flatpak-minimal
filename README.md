@@ -112,6 +112,40 @@ vfpk-runner.sh --arch aarch64 \
     --input DIR --output installation.tar -- 'flatpak install --system ...'
 ```
 
+### Flatpak content from outside the build
+
+`classes/flatpak-bundle.bbclass` packages flatpak content built elsewhere, so
+it can be installed at build time. A recipe provides either refs mirrored
+from a remote, pinned by commit:
+
+```
+inherit flatpak-bundle
+FLATPAK_REMOTE = "flathub"
+FLATPAK_REMOTE_URL = "https://dl.flathub.org/repo/"
+FLATPAK_REMOTE_GPGKEY = "flathub.gpg"
+FLATPAK_REMOTE_REFS:aarch64 = "runtime/org.freedesktop.Platform/aarch64/25.08@<commit>"
+```
+
+or a single `.flatpak` bundle (`FLATPAK_BUNDLE_FILE`, `FLATPAK_BUNDLE_REF`)
+fetched through `SRC_URI` with a checksum. Mirrored commits are pulled with
+ostree-native into `${DL_DIR}/flatpak-mirror` during `do_fetch`, checked
+against the GPG key and against the ref each commit is bound to, and shipped
+in the package as an ostree repository. Find a commit to pin with
+`flatpak remote-info flathub <ref>`; Flathub's summary only lists x86_64 refs
+for plain ostree, so the build pulls by commit, never by name.
+
+A bundle should be built with `flatpak build-bundle --repo-url=...` so the
+installed app can be updated from that remote. One without it installs but
+never updates, and has to be allowed explicitly with
+`FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1"`.
+
+The layer ships two such recipes, both aarch64 only for now:
+
+| Recipe | Content |
+| --- | --- |
+| `flathub-freedesktop-platform` | `org.freedesktop.Platform` and its `GL.default` extension, 25.08, pinned |
+| `flutter-remote-manager` | the released `flutter_remote_manager` bundle; built without `--repo-url`, so not updatable |
+
 ## Remotes
 
 `flatpak-remotes` writes one `/etc/flatpak/remotes.d/<name>.flatpakrepo` per
