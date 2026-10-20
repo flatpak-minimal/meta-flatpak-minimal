@@ -13,8 +13,10 @@
 # The image's /usr becomes the runtime's files/ (mounted at /usr in the
 # sandbox) and its /etc becomes files/etc, which flatpak exposes as /etc.
 # The result is committed as runtime/ID/ARCH/BRANCH into an ostree archive
-# repository deployed as ${IMAGE_LINK_NAME}.flatpakrepo. A flatpak-bundle
-# recipe with FLATPAK_IMAGE packages it for flatpak-cross-install.
+# repository deployed as ${IMAGE_LINK_NAME}.flatpakrepo, with the licenses of
+# every package in it listed in ${IMAGE_LINK_NAME}.flatpakrepo.licenses. A
+# flatpak-bundle recipe with FLATPAK_IMAGE packages it for
+# flatpak-cross-install, and checks its LICENSE against that list.
 #
 # flatpak links /lib, /bin and friends to /usr inside the sandbox, so the
 # image needs a merged /usr (the usrmerge distro feature). Apps run with the
@@ -48,6 +50,25 @@ python () {
     if not bb.utils.contains('DISTRO_FEATURES', 'usrmerge', True, False, d):
         raise bb.parse.SkipRecipe("a flatpak runtime needs the usrmerge distro feature")
 }
+
+def flatpak_runtime_licenses(d):
+    """The license names of every package installed in the image."""
+    import oe.packagedata
+
+    names = set()
+    with open(d.getVar('IMAGE_MANIFEST')) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            pkg = line.split()[0]
+            data = oe.packagedata.read_pkgdatafile(
+                os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', pkg))
+            # Per-package LICENSE:<pkg> overrides the recipe's LICENSE.
+            value = next((v for k, v in data.items() if k.startswith('LICENSE:')), data.get('LICENSE'))
+            if not value:
+                bb.fatal("no license recorded for %s, installed in the runtime" % pkg)
+            names |= flatpak_license_names(value)
+    return sorted(names)
 
 python do_flatpak_runtime () {
     import shutil
@@ -105,12 +126,16 @@ python do_flatpak_runtime () {
     bb.note("Committed %s as %s" % (ref, commit))
     bb.utils.remove(work, recurse=True)
 
+    with open(repo + '.licenses', 'w') as f:
+        f.write(''.join(name + '\n' for name in flatpak_runtime_licenses(d)))
+
     link = d.getVar('IMAGE_LINK_NAME')
     if link:
-        path = os.path.join(d.getVar('IMGDEPLOYDIR'), link + '.flatpakrepo')
-        if os.path.lexists(path):
-            os.unlink(path)
-        os.symlink(os.path.basename(repo), path)
+        for suffix in ('.flatpakrepo', '.flatpakrepo.licenses'):
+            path = os.path.join(d.getVar('IMGDEPLOYDIR'), link + suffix)
+            if os.path.lexists(path):
+                os.unlink(path)
+            os.symlink(os.path.basename(repo) + suffix[len('.flatpakrepo'):], path)
 }
 do_flatpak_runtime[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID"
 # The key's location is not content; the key ID is.

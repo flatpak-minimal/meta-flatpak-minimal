@@ -11,8 +11,15 @@ DESCRIPTION = "The freedesktop runtime and its default GL extension, mirrored \
 HOMEPAGE = "https://freedesktop-sdk.io"
 
 # An aggregate of hundreds of components under their own licenses, shipped
-# as Flathub builds it; this build does not unpack or inspect it.
-LICENSE = "CLOSED"
+# as Flathub builds it. This build cannot list or check them; the license
+# text says where they are recorded. Shipping it means accepting that, so it
+# is restricted: set LICENSE_FLAGS_ACCEPTED += "flathub" to build it.
+LICENSE = "Freedesktop-SDK-runtime"
+NO_GENERIC_LICENSE[Freedesktop-SDK-runtime] = "freedesktop-sdk-runtime.license"
+LIC_FILES_CHKSUM = "file://freedesktop-sdk-runtime.license;md5=d92a1cb313768e69c3aa84b8d32beab0"
+LICENSE_FLAGS = "flathub"
+
+SRC_URI = "file://freedesktop-sdk-runtime.license"
 
 inherit flatpak-bundle
 

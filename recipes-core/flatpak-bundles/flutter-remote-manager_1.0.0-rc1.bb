@@ -34,3 +34,6 @@ FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1"
 COMPATIBLE_HOST = "aarch64.*-linux"
 
 RDEPENDS:${PN} = "flathub-freedesktop-platform"
+# The app is MIT, but it runs only on that runtime, which is restricted;
+# without the same flag world builds would fail on a missing runtime.
+LICENSE_FLAGS = "flathub"

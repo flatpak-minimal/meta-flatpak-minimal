@@ -9,9 +9,9 @@ DESCRIPTION = "The org.flatpak_minimal.Test.Platform runtime from \
                installs at build time."
 HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
-# busybox (GPL-2.0-only) and glibc's dynamic linker (LGPL-2.1-or-later), as
-# vfpk-test-runtime-image's license manifest lists them.
-LICENSE = "CLOSED"
+# The licenses of the packages in the runtime; do_compile checks the list.
+LICENSE = "BSD-2-Clause & BSD-3-Clause & bzip2-1.0.6 & GPL-2.0-only & GPL-2.0-or-later & \
+           LGPL-2.1-or-later & MIT"
 
 inherit flatpak-bundle
 

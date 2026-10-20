@@ -1,0 +1,21 @@
+org.freedesktop.Platform and its extensions, as published on Flathub
+
+The runtime is built by the Freedesktop SDK project and distributed by
+Flathub. It is an aggregate of several hundred free software components, each
+under its own license; among them are the GNU C library (LGPL), GCC's runtime
+libraries (GPL with the GCC runtime library exception), Mesa (MIT) and many
+GPL, LGPL, MIT, BSD, Apache and MPL licensed libraries and tools.
+
+This build mirrors the runtime at a pinned commit and installs it unchanged.
+It does not unpack or inspect it, and the runtime's manifest.json names its
+components but not their licenses, so the individual licenses are not listed
+or checked here, and INCOMPATIBLE_LICENSE cannot apply to them.
+
+The licenses of the components are recorded in the Freedesktop SDK sources,
+one element per component:
+
+  https://gitlab.com/freedesktop-sdk/freedesktop-sdk
+
+The release branch matches the runtime branch (for example release/25.08).
+The runtime's /usr/manifest.json lists the components and versions it was
+built from.

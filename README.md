@@ -148,6 +148,13 @@ The layer ships two such recipes, both aarch64 only for now:
 | `flathub-freedesktop-platform` | `org.freedesktop.Platform` and its `GL.default` extension, 25.08, pinned |
 | `flutter-remote-manager` | the released `flutter_remote_manager` bundle; built without `--repo-url`, so not updatable |
 
+The Freedesktop runtime is an aggregate of hundreds of components that this
+build neither builds nor inspects, and its manifest does not carry their
+licenses, so they cannot be listed or checked against `INCOMPATIBLE_LICENSE`.
+The recipe's license text says where they are recorded, and the recipe is
+restricted: accept that explicitly with `LICENSE_FLAGS_ACCEPTED += "flathub"`
+(which `flutter-remote-manager`, built on it, needs too).
+
 ### Installing flatpak content into an image
 
 An image that inherits `flatpak-cross-install` gets every flatpak-bundle
@@ -251,6 +258,12 @@ into ostree repositories:
 Both kinds of package install through `flatpak-cross-install` like any other
 bundle: `IMAGE_INSTALL += "<app>-flatpak"` or `BUNDLED_FLATPAKS`. The app
 package depends on its runtime's package.
+
+A runtime built here carries the licenses of its packages: the image lists
+them next to the repository, and the packaging recipe's `LICENSE` must name
+every one of them, or `do_compile` fails and prints the current list. Each
+package is built from its own recipe, so `INCOMPATIBLE_LICENSE` and the
+license manifests cover the runtime's contents as they cover the image's.
 
 Refs built here install under `FLATPAK_BUILD_REMOTE`, which must be in
 `FLATPAK_REMOTES`; publish the deployed repositories there so devices can

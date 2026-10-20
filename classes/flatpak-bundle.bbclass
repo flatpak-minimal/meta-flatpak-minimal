@@ -38,7 +38,10 @@
 #     FLATPAK_IMAGE = "flutter-platform-runtime-image"
 #
 #   The image's deployed repository is copied whole. FLATPAK_REMOTE defaults
-#   to FLATPAK_BUILD_REMOTE.
+#   to FLATPAK_BUILD_REMOTE. LICENSE must name every license of the packages
+#   in the runtime: do_compile checks it against the list the image deploys
+#   and says what is missing. LIC_FILES_CHKSUM defaults to the common license
+#   texts of those licenses.
 #
 # For mirrored and built refs, FLATPAK_REMOTE names the remote the content is installed
 # under, and so the origin it is updated from on the device. It must match a
@@ -100,8 +103,17 @@ python () {
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', remote):
             bb.fatal("FLATPAK_REMOTE '%s' is not a remote name" % remote)
         d.appendVarFlag('do_compile', 'depends', ' %s:do_image_complete' % image)
+        d.appendVarFlag('do_compile', 'prefuncs', ' flatpak_bundle_check_licenses')
         # The image is built for this machine.
         d.setVar('PACKAGE_ARCH', d.getVar('MACHINE_ARCH'))
+        if not d.getVar('LIC_FILES_CHKSUM'):
+            # The licenses' texts, as the common license directory has them.
+            files = []
+            for name in sorted(flatpak_license_names(d.getVar('LICENSE'))):
+                path = os.path.join(d.getVar('COMMON_LICENSE_DIR'), name)
+                if os.path.isfile(path):
+                    files.append('file://%s;md5=%s' % (path, bb.utils.md5_file(path)))
+            d.setVar('LIC_FILES_CHKSUM', ' '.join(files))
         return
 
     ref_re = r'(app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_]+/[A-Za-z0-9._-]+'
@@ -142,6 +154,22 @@ python () {
     d.appendVarFlag('do_fetch', 'depends', ' ostree-native:do_populate_sysroot')
     d.appendVarFlag('do_fetch', 'prefuncs', ' extend_recipe_sysroot')
     d.appendVarFlag('do_fetch', 'postfuncs', ' flatpak_bundle_mirror')
+}
+
+python flatpak_bundle_check_licenses () {
+    path = d.getVar('FLATPAK_IMAGE_REPO') + '.licenses'
+    if not os.path.isfile(path):
+        bb.fatal("%s deployed no license list at %s" % (d.getVar('FLATPAK_IMAGE'), path))
+    with open(path) as f:
+        runtime = set(f.read().split())
+    declared = flatpak_license_names(d.getVar('LICENSE'))
+    missing = sorted(runtime - declared)
+    if missing:
+        bb.fatal("LICENSE does not name every license in %s; missing: %s. The runtime's licenses are:\n"
+                 "LICENSE = \"%s\"" % (d.getVar('FLATPAK_IMAGE'), ' '.join(missing), ' & '.join(sorted(runtime))))
+    unused = sorted(declared - runtime)
+    if unused:
+        bb.warn("LICENSE names licenses no package in %s has: %s" % (d.getVar('FLATPAK_IMAGE'), ' '.join(unused)))
 }
 
 def flatpak_bundle_ostree(d, args, **kwargs):

@@ -48,6 +48,11 @@ FLATPAK_BUNDLES_DIR = "${datadir}/flatpak-bundles"
 # shared build disk refuses writes with plenty of room left.
 FLATPAK_REPO_MIN_FREE ??= "1GB"
 
+def flatpak_license_names(expression):
+    """The license names in a LICENSE expression, without its operators."""
+    import re
+    return set(re.findall(r'[A-Za-z0-9.+_-]+', expression or ''))
+
 # Where the installation built in the guest ends up:
 #   rootfs    - unpacked into ${IMAGE_ROOTFS}/var/lib/flatpak. Only valid when
 #               the rootfs is writable at runtime.
