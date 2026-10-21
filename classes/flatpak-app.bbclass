@@ -22,10 +22,12 @@
 # outside FLATPAK_APP_FILES is made absolute, so it resolves into the
 # runtime's /usr.
 #
-# The app is committed as app/ID/ARCH/BRANCH (flatpak-repo.bbclass) and ships
-# in ${PN}-flatpak under ${FLATPAK_BUNDLES_DIR}, in the form flatpak-bundle
-# uses, so 'IMAGE_INSTALL += "${PN}-flatpak"' or BUNDLED_FLATPAKS installs it
-# through flatpak-cross-install. ${PN}-flatpak depends on
+# The app is committed as app/ID/ARCH/BRANCH (flatpak-repo.bbclass), deployed
+# for publishing to ${DEPLOY_DIR}/flatpak/refs/<package arch>/${PN}/repo
+# (flatpak-deploy.bbclass), and ships in ${PN}-flatpak under
+# ${FLATPAK_BUNDLES_DIR}, in the form flatpak-bundle uses, so
+# 'IMAGE_INSTALL += "${PN}-flatpak"' or BUNDLED_FLATPAKS installs it through
+# flatpak-cross-install. ${PN}-flatpak depends on
 # FLATPAK_APP_RUNTIME_PACKAGE, which carries the runtime the same way.
 #
 # FLATPAK_APP_COMMAND is a command line run by /bin/sh from the runtime; a
@@ -38,7 +40,7 @@
 # soname (dlopen("libfoo.so")) is only found through LD_LIBRARY_PATH: list its
 # directory in FLATPAK_APP_LD_LIBRARY_PATH, which the launcher exports.
 
-inherit flatpak-repo
+inherit flatpak-repo flatpak-deploy
 
 FLATPAK_APP_ID ??= ""
 FLATPAK_APP_BRANCH ??= "stable"
@@ -190,3 +192,11 @@ do_install[vardeps] += "FLATPAK_APP_ID FLATPAK_APP_BRANCH FLATPAK_APP_RUNTIME FL
     FLATPAK_APP_LD_LIBRARY_PATH FLATPAK_REMOTE \
     FLATPAK_GPGID"
 do_install[vardepsexclude] += "FLATPAK_GPGHOME"
+
+python do_deploy_flatpak () {
+    import shutil
+    src = os.path.join(d.getVar('D') + d.getVar('FLATPAK_BUNDLES_DIR'), 'repos', d.getVar('FLATPAK_APP_PACKAGE'))
+    shutil.copytree(src, os.path.join(d.getVar('FLATPAK_DEPLOYDIR'), 'repo'), symlinks=True)
+}
+do_deploy_flatpak[cleandirs] = "${FLATPAK_DEPLOYDIR}"
+addtask deploy_flatpak after do_install before do_build

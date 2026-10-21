@@ -13,17 +13,17 @@
 # The image's /usr becomes the runtime's files/ (mounted at /usr in the
 # sandbox) and its /etc becomes files/etc, which flatpak exposes as /etc.
 # The result is committed as runtime/ID/ARCH/BRANCH into an ostree archive
-# repository deployed as ${IMAGE_LINK_NAME}.flatpakrepo, with the licenses of
-# every package in it listed in ${IMAGE_LINK_NAME}.flatpakrepo.licenses. A
-# flatpak-bundle recipe with FLATPAK_IMAGE packages it for
-# flatpak-cross-install, and checks its LICENSE against that list.
+# repository deployed to ${DEPLOY_DIR}/flatpak/refs/<package arch>/${PN}/repo
+# (flatpak-deploy.bbclass), with the licenses of every package in it listed
+# in licenses beside it. A flatpak-bundle recipe with FLATPAK_IMAGE packages
+# it for flatpak-cross-install, and checks its LICENSE against that list.
 #
 # flatpak links /lib, /bin and friends to /usr inside the sandbox, so the
 # image needs a merged /usr (the usrmerge distro feature). Apps run with the
 # runtime's dynamic linker and libraries, so include ldconfig, which flatpak
 # runs to build the sandbox's ld.so.cache.
 
-inherit image flatpak-repo
+inherit image flatpak-repo flatpak-deploy
 
 FLATPAK_RUNTIME_ID ??= ""
 FLATPAK_RUNTIME_BRANCH ??= ""
@@ -35,7 +35,7 @@ IMAGE_FEATURES = ""
 IMAGE_LINGUAS = ""
 KERNELDEPMODDEPEND = ""
 
-FLATPAK_RUNTIME_REPO = "${IMGDEPLOYDIR}/${IMAGE_NAME}.flatpakrepo"
+FLATPAK_RUNTIME_REPO = "${FLATPAK_DEPLOYDIR}/repo"
 
 python () {
     import re
@@ -70,7 +70,7 @@ def flatpak_runtime_licenses(d):
             names |= flatpak_license_names(value)
     return sorted(names)
 
-python do_flatpak_runtime () {
+python do_deploy_flatpak () {
     import shutil
     import subprocess
 
@@ -126,18 +126,11 @@ python do_flatpak_runtime () {
     bb.note("Committed %s as %s" % (ref, commit))
     bb.utils.remove(work, recurse=True)
 
-    with open(repo + '.licenses', 'w') as f:
+    with open(os.path.join(d.getVar('FLATPAK_DEPLOYDIR'), 'licenses'), 'w') as f:
         f.write(''.join(name + '\n' for name in flatpak_runtime_licenses(d)))
-
-    link = d.getVar('IMAGE_LINK_NAME')
-    if link:
-        for suffix in ('.flatpakrepo', '.flatpakrepo.licenses'):
-            path = os.path.join(d.getVar('IMGDEPLOYDIR'), link + suffix)
-            if os.path.lexists(path):
-                os.unlink(path)
-            os.symlink(os.path.basename(repo) + suffix[len('.flatpakrepo'):], path)
 }
-do_flatpak_runtime[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID"
+do_deploy_flatpak[cleandirs] = "${FLATPAK_DEPLOYDIR}"
+do_deploy_flatpak[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID"
 # The key's location is not content; the key ID is.
-do_flatpak_runtime[vardepsexclude] += "FLATPAK_GPGHOME"
-addtask flatpak_runtime after do_image before do_image_complete
+do_deploy_flatpak[vardepsexclude] += "FLATPAK_GPGHOME"
+addtask deploy_flatpak after do_image before do_image_complete

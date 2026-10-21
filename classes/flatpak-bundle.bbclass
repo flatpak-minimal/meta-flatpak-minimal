@@ -64,8 +64,10 @@ FLATPAK_BUNDLE_REF ??= ""
 FLATPAK_BUNDLE_ALLOW_NO_ORIGIN ??= "0"
 FLATPAK_IMAGE ??= ""
 FLATPAK_BUILD_REMOTE ??= ""
-# The default deploy name of an image (image-artifact-names.bbclass).
-FLATPAK_IMAGE_REPO ??= "${DEPLOY_DIR_IMAGE}/${FLATPAK_IMAGE}-${MACHINE}.rootfs.flatpakrepo"
+# Where flatpak-runtime-image deploys (flatpak-deploy.bbclass); an image's
+# package arch is the machine's.
+FLATPAK_IMAGE_DEPLOY = "${DEPLOY_DIR}/flatpak/refs/${MACHINE_ARCH}/${FLATPAK_IMAGE}"
+FLATPAK_IMAGE_REPO = "${FLATPAK_IMAGE_DEPLOY}/repo"
 
 # Flathub's CDN refuses requests whose user agent names libostree, which is
 # ostree's default.
@@ -102,7 +104,7 @@ python () {
             d.setVar('FLATPAK_REMOTE', remote)
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', remote):
             bb.fatal("FLATPAK_REMOTE '%s' is not a remote name" % remote)
-        d.appendVarFlag('do_compile', 'depends', ' %s:do_image_complete' % image)
+        d.appendVarFlag('do_compile', 'depends', ' %s:do_deploy_flatpak' % image)
         d.appendVarFlag('do_compile', 'prefuncs', ' flatpak_bundle_check_licenses')
         # The image is built for this machine.
         d.setVar('PACKAGE_ARCH', d.getVar('MACHINE_ARCH'))
@@ -157,7 +159,7 @@ python () {
 }
 
 python flatpak_bundle_check_licenses () {
-    path = d.getVar('FLATPAK_IMAGE_REPO') + '.licenses'
+    path = os.path.join(d.getVar('FLATPAK_IMAGE_DEPLOY'), 'licenses')
     if not os.path.isfile(path):
         bb.fatal("%s deployed no license list at %s" % (d.getVar('FLATPAK_IMAGE'), path))
     with open(path) as f:

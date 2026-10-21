@@ -247,9 +247,8 @@ into ostree repositories:
 - `flatpak-runtime-image` makes an image a runtime: its `/usr` becomes the
   runtime's files and its `/etc` the runtime's `/etc`, with the linker setup
   flatpak expects (`bin/ldconfig`, and app library paths in `ld.so.conf`
-  ahead of the image's own). It needs `usrmerge`. The repository is
-  deployed as `<image>-<machine>.rootfs.flatpakrepo`, and a flatpak-bundle
-  recipe with `FLATPAK_IMAGE = "<image>"` packages it.
+  ahead of the image's own). It needs `usrmerge`. A flatpak-bundle recipe
+  with `FLATPAK_IMAGE = "<image>"` packages it.
 - `flatpak-app` (generic) and `flatpak-flutter-app` (meta-flutter apps) add a
   `${PN}-flatpak` package to an app recipe, holding an app ref made from part
   of what the recipe installs. `${prefix}` maps to `/app`, so installed paths
@@ -266,10 +265,33 @@ package is built from its own recipe, so `INCOMPATIBLE_LICENSE` and the
 license manifests cover the runtime's contents as they cover the image's.
 
 Refs built here install under `FLATPAK_BUILD_REMOTE`, which must be in
-`FLATPAK_REMOTES`; publish the deployed repositories there so devices can
-update. `FLATPAK_GPGID` and `FLATPAK_GPGHOME` sign the commits; without them
-the remote needs `FLATPAK_REMOTE_NO_GPG`. Commits are timestamped with
-`SOURCE_DATE_EPOCH`.
+`FLATPAK_REMOTES`. `FLATPAK_GPGID` and `FLATPAK_GPGHOME` sign the commits;
+without them the remote needs `FLATPAK_REMOTE_NO_GPG`. Commits are
+timestamped with `SOURCE_DATE_EPOCH`.
+
+#### Publishing
+
+Every producer also deploys its refs, like a package feed rather than an
+image artifact:
+
+```
+tmp/deploy/flatpak/
+  refs/<package arch>/<pn>/repo    one repository per producing recipe
+  refs/<package arch>/<pn>/licenses  (runtimes) licenses of their packages
+  repo/                            the publishable repository
+```
+
+`bitbake flatpak-repo-index` merges every deployed ref into `repo/`, keeps
+only the current commit of each, signs the summary with `FLATPAK_GPGID`,
+and checks it. Sync `repo/` to the remote's URL and devices update from
+it. Like `package-index`, it publishes what has been deployed;
+`FLATPAK_PUBLISH_RECIPES` builds named producers first.
+
+A repository holds one commit per ref. Two builds of the same ref for
+different CPU tunes or machines (a Cortex-A57 and a Cortex-A76 build of one
+aarch64 app) differ, and the index refuses them: publish from one build per
+flatpak arch, ideally for a baseline tune, and choose it with
+`FLATPAK_PUBLISH_PACKAGE_ARCHS`.
 
 With meta-flutter, the layer provides the Flutter runtime:
 
