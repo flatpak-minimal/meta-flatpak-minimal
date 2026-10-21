@@ -38,7 +38,19 @@ FLATPAK_PUBLISH_PACKAGE_ARCHS ??= ""
 # Recipes to build first; their refs are published either way once deployed.
 FLATPAK_PUBLISH_RECIPES ??= ""
 
+# Static deltas to generate for each ref that changed:
+#   previous  from the commit published before, so an update is a few files
+#             instead of every changed object
+#   empty     from scratch, for installs over the network; about doubles
+#             the repository's size
+# Devices here get their first install at build time, so only previous by
+# default. A delta lives as long as the commit it leads to.
+FLATPAK_PUBLISH_DELTAS ??= "previous"
+
 python () {
+    for word in (d.getVar('FLATPAK_PUBLISH_DELTAS') or '').split():
+        if word not in ('previous', 'empty'):
+            bb.fatal("FLATPAK_PUBLISH_DELTAS: unknown '%s'; use previous and/or empty" % word)
     for pn in (d.getVar('FLATPAK_PUBLISH_RECIPES') or '').split():
         d.appendVarFlag('do_flatpak_repo_index', 'depends', ' %s:do_deploy_flatpak' % pn)
 }
@@ -79,11 +91,29 @@ python do_flatpak_repo_index () {
             flatpak_repo_ostree(d, ['--repo=%s' % repo, 'init', '--mode=archive'])
         flatpak_repo_ostree(d, ['--repo=%s' % repo, 'config', 'set', 'core.min-free-space-size',
                                 d.getVar('FLATPAK_REPO_MIN_FREE')])
+        # What devices have now, while its objects are still here.
+        published = {}
+        for ref in flatpak_repo_ostree(d, ['--repo=%s' % repo, 'refs']).split():
+            published[ref] = flatpak_repo_ostree(d, ['--repo=%s' % repo, 'rev-parse', ref]).strip()
         for name, src in sources:
             flatpak_repo_ostree(d, ['--repo=%s' % repo, 'pull-local', src] +
                                 flatpak_repo_ostree(d, ['--repo=%s' % src, 'refs']).split())
+        kinds = (d.getVar('FLATPAK_PUBLISH_DELTAS') or '').split()
+        existing = set(flatpak_repo_ostree(d, ['--repo=%s' % repo, 'static-delta', 'list']).split())
+        for ref, (commit, name) in sorted(owner.items()):
+            old = published.get(ref)
+            if 'previous' in kinds and old and old != commit and '%s-%s' % (old, commit) not in existing:
+                flatpak_repo_ostree(d, ['--repo=%s' % repo, 'static-delta', 'generate',
+                                        '--from=%s' % old, '--to=%s' % commit])
+                bb.note("delta %s: %s -> %s" % (ref, old, commit))
+            if 'empty' in kinds and commit not in existing:
+                flatpak_repo_ostree(d, ['--repo=%s' % repo, 'static-delta', 'generate',
+                                        '--empty', '--to=%s' % commit])
+                bb.note("delta %s: from scratch -> %s" % (ref, commit))
+
         # Devices fetch the current commit of each ref; older ones are no
-        # longer referenced.
+        # longer referenced. Pruning them also drops the deltas that led to
+        # them.
         flatpak_repo_ostree(d, ['--repo=%s' % repo, 'prune', '--refs-only'])
         bb.utils.remove(os.path.join(repo, 'summary.sig'))
         args = ['--repo=%s' % repo, 'summary', '--update']
