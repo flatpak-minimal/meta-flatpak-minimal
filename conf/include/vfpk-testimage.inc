@@ -27,9 +27,9 @@ BUNDLED_FLATPAKS:pn-flatpak-minimal-image = "vfpk-test-hello-flatpak"
 # testimage logs in as root over ssh.
 IMAGE_FEATURES:append:pn-flatpak-minimal-image = " allow-empty-password empty-root-password allow-root-login"
 
-# testimage boots the image, so it needs a real kernel (CI builds with
-# linux-dummy otherwise).
-PREFERRED_PROVIDER_virtual/kernel = "linux-yocto"
+# testimage boots the image under qemu, so qemu machines need a real kernel
+# (CI builds with linux-dummy otherwise). Other machines keep their BSP's.
+PREFERRED_PROVIDER_virtual/kernel:qemuall = "linux-yocto"
 
 IMAGE_CLASSES += "testimage"
 TEST_SUITES:pn-flatpak-minimal-image = "ping ssh flatpak"
