@@ -141,7 +141,7 @@ so `FLATPAK_REMOTE` does not apply to it. One without it installs but never
 updates, and has to be allowed explicitly with
 `FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1"`.
 
-The layer ships two such recipes, both aarch64 only for now:
+The layer ships two such recipes, for aarch64 and x86_64:
 
 | Recipe | Content |
 | --- | --- |
