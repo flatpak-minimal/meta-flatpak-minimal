@@ -25,7 +25,12 @@ FLUTTER_APPLICATION_PATH = "example/flathub_catalog"
 PUBSPEC_APPNAME = "flathub_catalog"
 FLUTTER_APPLICATION_INSTALL_SUFFIX = "appstream-dart-example-flathub-catalog"
 
-inherit flutter-app-native
+inherit flutter-app-native flatpak-flutter-app
+
+# Also packaged as a flatpak app on the Flutter runtime, in ${PN}-flatpak.
+FLATPAK_APP_ID = "org.flatpak_minimal.appstream_dart.example.flathub_catalog"
+# It reads the Flathub catalog over the network.
+FLATPAK_APP_FINISH_ARGS = "--socket=wayland --device=dri --share=ipc --share=network"
 
 # Vendored pub cache: dependencies arrive through SRC_URI with checksums
 # rather than a networked `pub get` during the build. The .inc and the lockfile
@@ -76,3 +81,8 @@ do_install:append() {
     ln -sf ${libdir}/libsqlite3.so.0 \
         ${D}${FLUTTER_INSTALL_DIR}/${FLUTTER_SDK_VERSION}/${FLUTTER_RUNTIME_MODE}/lib/libsqlite3.so
 }
+
+# pub-cache.bbclass orders do_seed_pub_cache only after do_unpack, but the task
+# copies from the SDK in the recipe sysroot, which do_prepare_recipe_sysroot
+# fills. On a cold build it can run first and fail with "no .pub-cache".
+addtask seed_pub_cache after do_prepare_recipe_sysroot
