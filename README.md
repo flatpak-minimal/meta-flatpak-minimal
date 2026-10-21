@@ -283,7 +283,11 @@ tmp/deploy/flatpak/
 
 `bitbake flatpak-repo-index` merges every deployed ref into `repo/`, keeps
 only the current commit of each, signs the summary with `FLATPAK_GPGID`,
-and checks it. Sync `repo/` to the remote's URL and devices update from
+and checks it. For a ref that changed it generates a static delta from the
+commit published before, so an update downloads one file instead of every
+changed object; `FLATPAK_PUBLISH_DELTAS = "previous empty"` adds deltas
+from scratch for network installs, at roughly the repository's size again.
+A delta goes away with the commit it leads to. Sync `repo/` to the remote's URL and devices update from
 it. Like `package-index`, it publishes what has been deployed;
 `FLATPAK_PUBLISH_RECIPES` builds named producers first.
 
