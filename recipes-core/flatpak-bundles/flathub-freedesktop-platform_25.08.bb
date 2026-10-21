@@ -36,6 +36,9 @@ FLATPAK_REMOTE_REFS:aarch64 = " \
     runtime/org.freedesktop.Platform/aarch64/25.08@ef5f18baf428baaf76078a8487da92edf6554f461633f60197c8ee655fd09090 \
     runtime/org.freedesktop.Platform.GL.default/aarch64/25.08@64b5be165afe267110ac521610325c32e9e9c44d2ea9d0ebd2bb199c675dafb5 \
 "
+FLATPAK_REMOTE_REFS:x86-64 = " \
+    runtime/org.freedesktop.Platform/x86_64/25.08@b7aba340fd291e08bf26442d43a0e4adb6733da5a06d47ff4296a964af40cc8a \
+    runtime/org.freedesktop.Platform.GL.default/x86_64/25.08@fe659a591fe882f573584ae62cfb55b92065e4ff7a972833271438bddfa6669e \
+"
 
-# Only aarch64 is pinned so far.
-COMPATIBLE_HOST = "aarch64.*-linux"
+COMPATIBLE_HOST = "(aarch64|x86_64).*-linux"
