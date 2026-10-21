@@ -305,7 +305,17 @@ With meta-flutter, the layer provides the Flutter runtime:
 | `flutter-platform-runtime` | that runtime, packaged |
 
 The branch is the Flutter SDK version, so an app's AOT code always meets the
-engine it was compiled for. A Flutter app opts in with:
+engine it was compiled for.
+
+`FLATPAK_RUNTIME_GL = "extension"` moves the GL stack out of a runtime into
+its own extension, `<runtime>.GL.default`, built from the same image. The
+runtime keeps an extension point at `/usr/lib/GL`, as Freedesktop's does;
+flatpak mounts the extension for each active GL driver and puts its
+libraries on the linker path. Another build can then ship a different GPU's
+stack as `<runtime>.GL.<name>`, picked on the device with
+`FLATPAK_GL_DRIVERS=<name>`. The libraries move whole (no libglvnd), so a
+vendor stack with its own `libEGL` fits too. The default, `runtime`, keeps
+Mesa in the runtime. A Flutter app opts in with:
 
 ```
 inherit flutter-app-native flatpak-flutter-app

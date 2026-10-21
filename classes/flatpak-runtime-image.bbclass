@@ -22,6 +22,24 @@
 # image needs a merged /usr (the usrmerge distro feature). Apps run with the
 # runtime's dynamic linker and libraries, so include ldconfig, which flatpak
 # runs to build the sandbox's ld.so.cache.
+#
+# FLATPAK_RUNTIME_GL picks where the GL stack goes:
+#
+#   runtime    in the runtime, like everything else (default)
+#   extension  in runtime/${FLATPAK_RUNTIME_ID}.GL.${FLATPAK_RUNTIME_GL_NAME},
+#              committed beside the runtime
+#
+# With extension, the ${libdir} files of the packages built by
+# FLATPAK_RUNTIME_GL_RECIPES (Mesa: libEGL, libGLESv2, libgbm, the gallium,
+# DRI and GBM drivers) move out of the runtime, and the runtime declares the
+# ${FLATPAK_RUNTIME_ID}.GL extension point at ${libdir}/GL, as Freedesktop's
+# runtime does. flatpak mounts the extension for each active GL driver
+# (FLATPAK_GL_DRIVERS, by default "default" and "host"), puts its lib/ on the
+# linker path and merges lib/dri and lib/gbm. Another build of the same
+# runtime branch can then ship its GL stack for another GPU as
+# ${FLATPAK_RUNTIME_ID}.GL.<name>, chosen on the device with
+# FLATPAK_GL_DRIVERS=<name>. The libraries move whole, without libglvnd, so
+# a vendor stack that brings its own libEGL works the same way.
 
 inherit image flatpak-repo flatpak-deploy
 
@@ -37,6 +55,16 @@ KERNELDEPMODDEPEND = ""
 
 FLATPAK_RUNTIME_REPO = "${FLATPAK_DEPLOYDIR}/repo"
 
+FLATPAK_RUNTIME_GL ??= "runtime"
+FLATPAK_RUNTIME_GL_NAME ??= "default"
+FLATPAK_RUNTIME_GL_RECIPES ??= "mesa"
+# Installed packages of those recipes to leave in the runtime. The Vulkan
+# ICD files name their drivers by absolute path, so they stay together.
+FLATPAK_RUNTIME_GL_EXCLUDE ??= "mesa-vulkan-drivers"
+# The extension's branch, which the runtime's extension point asks for.
+FLATPAK_RUNTIME_GL_VERSION ??= "${FLATPAK_RUNTIME_BRANCH}"
+FLATPAK_RUNTIME_GL_REF = "runtime/${FLATPAK_RUNTIME_ID}.GL.${FLATPAK_RUNTIME_GL_NAME}/${FLATPAK_ARCH}/${FLATPAK_RUNTIME_GL_VERSION}"
+
 python () {
     import re
 
@@ -49,25 +77,65 @@ python () {
         bb.fatal("FLATPAK_RUNTIME_BRANCH '%s' is not a flatpak branch" % d.getVar('FLATPAK_RUNTIME_BRANCH'))
     if not bb.utils.contains('DISTRO_FEATURES', 'usrmerge', True, False, d):
         raise bb.parse.SkipRecipe("a flatpak runtime needs the usrmerge distro feature")
+    if d.getVar('FLATPAK_RUNTIME_GL') not in ('runtime', 'extension'):
+        bb.fatal("FLATPAK_RUNTIME_GL is '%s'; use runtime or extension" % d.getVar('FLATPAK_RUNTIME_GL'))
+    # The last part of an extension ID may hold dashes (nvidia-550-54).
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', d.getVar('FLATPAK_RUNTIME_GL_NAME') or ''):
+        bb.fatal("FLATPAK_RUNTIME_GL_NAME '%s' is not a flatpak ID part" % d.getVar('FLATPAK_RUNTIME_GL_NAME'))
+    if not re.fullmatch(d.getVar('FLATPAK_BRANCH_RE'), d.getVar('FLATPAK_RUNTIME_GL_VERSION') or ''):
+        bb.fatal("FLATPAK_RUNTIME_GL_VERSION '%s' is not a flatpak branch" % d.getVar('FLATPAK_RUNTIME_GL_VERSION'))
 }
+
+def flatpak_runtime_packages(d):
+    """pkgdata of every package installed in the image, by package name."""
+    import oe.packagedata
+
+    packages = {}
+    with open(d.getVar('IMAGE_MANIFEST')) as f:
+        for line in f:
+            if line.strip():
+                pkg = line.split()[0]
+                packages[pkg] = oe.packagedata.read_pkgdatafile(
+                    os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', pkg))
+    return packages
+
+def flatpak_runtime_split_gl(d, files, gl_files):
+    """Move the GL packages' ${libdir} files from FILES to GL_FILES/lib."""
+    import json
+
+    prefix = d.getVar('prefix')
+    libdir = d.getVar('libdir')
+    recipes = (d.getVar('FLATPAK_RUNTIME_GL_RECIPES') or '').split()
+    exclude = (d.getVar('FLATPAK_RUNTIME_GL_EXCLUDE') or '').split()
+    moved = []
+    for pkg, data in sorted(flatpak_runtime_packages(d).items()):
+        if data.get('PN') not in recipes or pkg in exclude:
+            continue
+        info = next((v for k, v in data.items() if k.startswith('FILES_INFO')), '{}')
+        for path in sorted(json.loads(info)):
+            if not path.startswith(libdir + '/'):
+                continue
+            src = os.path.join(files, path[len(prefix) + 1:])
+            if not os.path.lexists(src):
+                continue
+            dest = os.path.join(gl_files, 'lib', path[len(libdir) + 1:])
+            bb.utils.mkdirhier(os.path.dirname(dest))
+            os.rename(src, dest)
+            moved.append(path)
+    if not moved:
+        bb.fatal("FLATPAK_RUNTIME_GL = \"extension\", but no package of %s installs files in %s"
+                 % (' '.join(recipes), libdir))
+    return moved
 
 def flatpak_runtime_licenses(d):
     """The license names of every package installed in the image."""
-    import oe.packagedata
-
     names = set()
-    with open(d.getVar('IMAGE_MANIFEST')) as f:
-        for line in f:
-            if not line.strip():
-                continue
-            pkg = line.split()[0]
-            data = oe.packagedata.read_pkgdatafile(
-                os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', pkg))
-            # Per-package LICENSE:<pkg> overrides the recipe's LICENSE.
-            value = next((v for k, v in data.items() if k.startswith('LICENSE:')), data.get('LICENSE'))
-            if not value:
-                bb.fatal("no license recorded for %s, installed in the runtime" % pkg)
-            names |= flatpak_license_names(value)
+    for pkg, data in flatpak_runtime_packages(d).items():
+        # Per-package LICENSE:<pkg> overrides the recipe's LICENSE.
+        value = next((v for k, v in data.items() if k.startswith('LICENSE:')), data.get('LICENSE'))
+        if not value:
+            bb.fatal("no license recorded for %s, installed in the runtime" % pkg)
+        names |= flatpak_license_names(value)
     return sorted(names)
 
 python do_deploy_flatpak () {
@@ -117,12 +185,44 @@ python do_deploy_flatpak () {
                 '/app/lib\n'
                 'include /run/flatpak/ld.so.conf.d/runtime-*.conf\n' + image_conf)
 
+    runtime_id = d.getVar('FLATPAK_RUNTIME_ID')
     ref = d.getVar('FLATPAK_RUNTIME_REF')
-    with open(os.path.join(tree, 'metadata'), 'w') as f:
-        f.write('[Runtime]\nname=%s\nruntime=%s\n'
-                % (d.getVar('FLATPAK_RUNTIME_ID'), ref.split('/', 1)[1]))
+    metadata = '[Runtime]\nname=%s\nruntime=%s\n' % (runtime_id, ref.split('/', 1)[1])
+    subject = '%s %s' % (d.getVar('PN'), d.getVar('PV'))
 
-    commit = flatpak_repo_commit(d, repo, ref, tree, '%s %s' % (d.getVar('PN'), d.getVar('PV')))
+    if d.getVar('FLATPAK_RUNTIME_GL') == 'extension':
+        gl_tree = os.path.join(work, 'gl')
+        moved = flatpak_runtime_split_gl(d, files, os.path.join(gl_tree, 'files'))
+        gl_dir = d.getVar('libdir')[len(d.getVar('prefix')) + 1:] + '/GL'
+        # flatpak mounts a tmpfs here for the subdirectories; /usr is
+        # read-only, so the directory has to exist.
+        bb.utils.mkdirhier(os.path.join(files, gl_dir))
+        gl_path = os.path.join(d.getVar('prefix'), gl_dir)
+        metadata += ('\n[Environment]\n'
+                     'LIBGL_DRIVERS_PATH=%s/lib/dri\n'
+                     'GBM_BACKENDS_PATH=%s/lib/gbm\n'
+                     '\n[Extension %s.GL]\n'
+                     'version=%s\n'
+                     'directory=%s\n'
+                     'subdirectories=true\n'
+                     'no-autodownload=true\n'
+                     'autodelete=false\n'
+                     'add-ld-path=lib\n'
+                     'merge-dirs=lib/dri;lib/gbm\n'
+                     'download-if=active-gl-driver\n'
+                     'enable-if=active-gl-driver\n'
+                     'autoprune-unless=active-gl-driver\n'
+                     % (gl_path, gl_path, runtime_id, d.getVar('FLATPAK_RUNTIME_GL_VERSION'), gl_dir))
+        gl_ref = d.getVar('FLATPAK_RUNTIME_GL_REF')
+        with open(os.path.join(gl_tree, 'metadata'), 'w') as f:
+            f.write('[Runtime]\nname=%s\nruntime=%s\n\n[ExtensionOf]\nref=%s\n'
+                    % (gl_ref.split('/')[1], ref.split('/', 1)[1], ref))
+        commit = flatpak_repo_commit(d, repo, gl_ref, gl_tree, subject)
+        bb.note("Committed %s as %s (%d files)" % (gl_ref, commit, len(moved)))
+
+    with open(os.path.join(tree, 'metadata'), 'w') as f:
+        f.write(metadata)
+    commit = flatpak_repo_commit(d, repo, ref, tree, subject)
     bb.note("Committed %s as %s" % (ref, commit))
     bb.utils.remove(work, recurse=True)
 
@@ -130,7 +230,8 @@ python do_deploy_flatpak () {
         f.write(''.join(name + '\n' for name in flatpak_runtime_licenses(d)))
 }
 do_deploy_flatpak[cleandirs] = "${FLATPAK_DEPLOYDIR}"
-do_deploy_flatpak[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID"
+do_deploy_flatpak[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID FLATPAK_RUNTIME_GL \
+    FLATPAK_RUNTIME_GL_NAME FLATPAK_RUNTIME_GL_RECIPES FLATPAK_RUNTIME_GL_EXCLUDE FLATPAK_RUNTIME_GL_VERSION"
 # The key's location is not content; the key ID is.
 do_deploy_flatpak[vardepsexclude] += "FLATPAK_GPGHOME"
 addtask deploy_flatpak after do_image before do_image_complete
