@@ -349,6 +349,35 @@ flatpak-builder in the SDK runs in the runtime. It has no Dart AOT
 compiler: meta-flutter builds `gen_snapshot` for the build machine only, so
 an app's Dart code is still compiled on the host.
 
+To build with it on a workstation, publish `repo-dev`, add it as a remote
+and point flatpak-builder at the SDK. Another arch builds through
+qemu-user (binfmt):
+
+```
+flatpak --user remote-add --no-gpg-verify vfpk-dev file:///path/to/tmp/deploy/flatpak/repo-dev
+flatpak --user install --arch=aarch64 vfpk-dev \
+    org.flatpak_minimal.Flutter.Sdk//3.47.7 org.flatpak_minimal.Flutter.Platform//3.47.7
+flatpak-builder --arch=aarch64 --repo=repo build-dir org.example.App.yml
+```
+
+with a manifest such as:
+
+```yaml
+app-id: org.example.App
+runtime: org.flatpak_minimal.Flutter.Platform
+runtime-version: '3.47.7'
+sdk: org.flatpak_minimal.Flutter.Sdk
+command: example
+modules:
+  - name: example
+    buildsystem: cmake-ninja
+    sources:
+      - type: dir
+        path: src
+```
+
+The branch is the Flutter version the layer builds.
+
 `FLATPAK_RUNTIME_GL = "extension"` moves the GL stack out of a runtime into
 its own extension, `<runtime>.GL.default`, built from the same image. The
 runtime keeps an extension point at `/usr/lib/GL`, as Freedesktop's does;
