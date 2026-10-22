@@ -323,6 +323,8 @@ FLATPAK_IMAGE_GENERIC = "1"
 | --- | --- | --- |
 | `vfpk-aarch64-generic` | `armv8a-crc` (Arm BSA, as `genericarm64`) | Mesa drivers for Broadcom, Vivante, Adreno and Mali Utgard GPUs |
 | `vfpk-x86-64-generic` | `core2-64` (as `genericx86-64`) | Mesa's default x86 drivers |
+| `vfpk-arm-generic` | `armv7athf-neon` (no VFPv4 or integer divide, for Cortex-A9) | The same Arm drivers as aarch64 |
+| `vfpk-riscv64-generic` | `riscv64` (rv64gc, no Zba/Zbb/vector) | Mesa's defaults |
 
 The multiconfig uses the main configuration's distro and `local.conf`, has
 its own `TMPDIR`, and deploys refs into the main `tmp/deploy/flatpak/`
