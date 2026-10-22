@@ -15,25 +15,9 @@ LICENSE = "MIT"
 
 inherit features_check flatpak-runtime-image
 
-require conf/include/flutter-version.inc
+require flutter-platform.inc
 
-REQUIRED_DISTRO_FEATURES = "opengl usrmerge wayland"
+FLATPAK_RUNTIME_ID = "${FLUTTER_PLATFORM_ID}"
+FLATPAK_RUNTIME_SDK = "${FLUTTER_SDK_ID}"
 
-FLATPAK_RUNTIME_ID = "org.flatpak_minimal.Flutter.Platform"
-FLATPAK_RUNTIME_BRANCH = "${@get_flutter_sdk_version(d)}"
-
-# busybox gives app launchers a /bin/sh; flatpak runs ldconfig to build the
-# sandbox's linker cache. Mesa's drivers are loaded at runtime, so nothing
-# pulls them in through library dependencies.
-IMAGE_INSTALL = "\
-    busybox \
-    ca-certificates \
-    fontconfig \
-    ivi-homescreen \
-    ${FLUTTER_ENGINE_PACKAGE} \
-    ldconfig \
-    libsqlite3 \
-    mesa-megadriver \
-    ttf-bitstream-vera \
-    xkeyboard-config \
-"
+IMAGE_INSTALL = "${FLUTTER_PLATFORM_PACKAGES}"

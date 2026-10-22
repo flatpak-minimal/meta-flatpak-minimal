@@ -23,6 +23,16 @@
 # runtime's dynamic linker and libraries, so include ldconfig, which flatpak
 # runs to build the sandbox's ld.so.cache.
 #
+# A runtime and its SDK are two images of the same build and branch:
+#
+#   runtime image:  FLATPAK_RUNTIME_SDK = "org.example.Sdk"
+#   SDK image:      FLATPAK_RUNTIME_ID = "org.example.Sdk"
+#                   FLATPAK_RUNTIME_PLATFORM = "org.example.Platform"
+#
+# which become sdk= in the runtime's metadata and runtime= in the SDK's, so
+# flatpak-builder builds in the SDK and runs in the runtime. The SDK image
+# installs the runtime's packages plus development files and tools.
+#
 # FLATPAK_RUNTIME_GL picks where the GL stack goes:
 #
 #   runtime    in the runtime, like everything else (default)
@@ -45,6 +55,8 @@ inherit image flatpak-repo flatpak-deploy
 
 FLATPAK_RUNTIME_ID ??= ""
 FLATPAK_RUNTIME_BRANCH ??= ""
+FLATPAK_RUNTIME_SDK ??= ""
+FLATPAK_RUNTIME_PLATFORM ??= ""
 FLATPAK_RUNTIME_REF = "runtime/${FLATPAK_RUNTIME_ID}/${FLATPAK_ARCH}/${FLATPAK_RUNTIME_BRANCH}"
 
 # A runtime is a userspace, not a bootable system.
@@ -77,6 +89,13 @@ python () {
         bb.fatal("FLATPAK_RUNTIME_BRANCH '%s' is not a flatpak branch" % d.getVar('FLATPAK_RUNTIME_BRANCH'))
     if not bb.utils.contains('DISTRO_FEATURES', 'usrmerge', True, False, d):
         raise bb.parse.SkipRecipe("a flatpak runtime needs the usrmerge distro feature")
+    for var in ('FLATPAK_RUNTIME_SDK', 'FLATPAK_RUNTIME_PLATFORM'):
+        if d.getVar(var) and not re.fullmatch(d.getVar('FLATPAK_ID_RE'), d.getVar(var)):
+            bb.fatal("%s '%s' is not a flatpak ID" % (var, d.getVar(var)))
+    if d.getVar('FLATPAK_RUNTIME_SDK') and d.getVar('FLATPAK_RUNTIME_PLATFORM'):
+        bb.fatal("set FLATPAK_RUNTIME_SDK on a runtime image or FLATPAK_RUNTIME_PLATFORM on an SDK image, not both")
+    if d.getVar('FLATPAK_RUNTIME_PLATFORM') and d.getVar('FLATPAK_RUNTIME_GL') != 'runtime':
+        bb.fatal("an SDK keeps its GL stack: FLATPAK_RUNTIME_GL must be runtime")
     if d.getVar('FLATPAK_RUNTIME_GL') not in ('runtime', 'extension'):
         bb.fatal("FLATPAK_RUNTIME_GL is '%s'; use runtime or extension" % d.getVar('FLATPAK_RUNTIME_GL'))
     # The last part of an extension ID may hold dashes (nvidia-550-54).
@@ -187,7 +206,13 @@ python do_deploy_flatpak () {
 
     runtime_id = d.getVar('FLATPAK_RUNTIME_ID')
     ref = d.getVar('FLATPAK_RUNTIME_REF')
-    metadata = '[Runtime]\nname=%s\nruntime=%s\n' % (runtime_id, ref.split('/', 1)[1])
+    # name/arch/branch, as the metadata names runtimes.
+    tail = '%s/%s' % (d.getVar('FLATPAK_ARCH'), d.getVar('FLATPAK_RUNTIME_BRANCH'))
+    platform = d.getVar('FLATPAK_RUNTIME_PLATFORM')
+    sdk = d.getVar('FLATPAK_RUNTIME_SDK') or (runtime_id if platform else '')
+    metadata = '[Runtime]\nname=%s\nruntime=%s/%s\n' % (runtime_id, platform or runtime_id, tail)
+    if sdk:
+        metadata += 'sdk=%s/%s\n' % (sdk, tail)
     subject = '%s %s' % (d.getVar('PN'), d.getVar('PV'))
 
     if d.getVar('FLATPAK_RUNTIME_GL') == 'extension':
@@ -231,6 +256,7 @@ python do_deploy_flatpak () {
 }
 do_deploy_flatpak[cleandirs] = "${FLATPAK_DEPLOYDIR}"
 do_deploy_flatpak[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID FLATPAK_RUNTIME_GL \
+    FLATPAK_RUNTIME_SDK FLATPAK_RUNTIME_PLATFORM \
     FLATPAK_RUNTIME_GL_NAME FLATPAK_RUNTIME_GL_RECIPES FLATPAK_RUNTIME_GL_EXCLUDE FLATPAK_RUNTIME_GL_VERSION"
 # The key's location is not content; the key ID is.
 do_deploy_flatpak[vardepsexclude] += "FLATPAK_GPGHOME"
