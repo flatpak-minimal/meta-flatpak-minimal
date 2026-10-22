@@ -278,6 +278,7 @@ image artifact:
 tmp/deploy/flatpak/
   refs/<package arch>/<pn>/repo    one repository per producing recipe
   refs/<package arch>/<pn>/licenses  (runtimes) licenses of their packages
+  refs/vfpk-<arch>-generic/<pn>/   the same, from a generic multiconfig
   repo/                            the repository devices update from
   repo-dev/                        the same plus SDKs, for developers
 ```
@@ -303,6 +304,33 @@ different CPU tunes or machines (a Cortex-A57 and a Cortex-A76 build of one
 aarch64 app) differ, and the index refuses them: publish from one build per
 flatpak arch, ideally for a baseline tune, and choose it with
 `FLATPAK_PUBLISH_PACKAGE_ARCHS`.
+
+#### Runtimes for every device of an arch
+
+A runtime built for `MACHINE` uses its CPU tune, and a Cortex-A76 build can
+fault on a Cortex-A72. To build runtimes once per flatpak arch instead, add
+the arch's generic multiconfig and turn it on:
+
+```
+BBMULTICONFIG = "vfpk-aarch64 vfpk-aarch64-generic"
+FLATPAK_IMAGE_GENERIC = "1"
+```
+
+`flatpak-bundle` recipes with `FLATPAK_IMAGE` then build their image in
+`vfpk-<arch>-generic` with a baseline tune, and package that:
+
+| Multiconfig | Tune | Also |
+| --- | --- | --- |
+| `vfpk-aarch64-generic` | `armv8a-crc` (Arm BSA, as `genericarm64`) | Mesa drivers for Broadcom, Vivante, Adreno and Mali Utgard GPUs |
+| `vfpk-x86-64-generic` | `core2-64` (as `genericx86-64`) | Mesa's default x86 drivers |
+
+The multiconfig uses the main configuration's distro and `local.conf`, has
+its own `TMPDIR`, and deploys refs into the main `tmp/deploy/flatpak/`
+under `refs/vfpk-<arch>-generic/`, so `flatpak-repo-index` publishes them.
+Build an SDK or other producer there with
+`bitbake mc:vfpk-aarch64-generic:flutter-platform-sdk-image`. Apps are still
+built for `MACHINE` and run on the generic runtime as on their own. Delete the main and generic `TMPDIR`s together, or the
+generic one keeps believing its refs are deployed.
 
 With meta-flutter, the layer provides the Flutter runtime:
 

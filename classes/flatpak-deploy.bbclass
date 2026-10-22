@@ -9,7 +9,10 @@
 # repository holding its refs in ${FLATPAK_DEPLOYDIR}/repo, and
 # do_deploy_flatpak deploys it, through sstate, to
 #
-#   ${DEPLOY_DIR}/flatpak/refs/${PACKAGE_ARCH}/${PN}/
+#   ${FLATPAK_DEPLOY_DIR}/refs/${FLATPAK_DEPLOY_ARCH}/${PN}/
+#
+# which is ${DEPLOY_DIR}/flatpak/refs/${PACKAGE_ARCH}/${PN}/ unless a
+# multiconfig says otherwise (flatpak-common).
 #
 # A flatpak repository is a feed, like deploy/ipk, not a per-machine image
 # artifact: refs are named by flatpak arch and one repository carries all of
@@ -18,13 +21,14 @@
 # producer's refs into the publishable ${DEPLOY_DIR}/flatpak/repo and refuses
 # two different commits of one ref.
 
-FLATPAK_DEPLOY_DIR = "${DEPLOY_DIR}/flatpak"
+inherit flatpak-common
+
 FLATPAK_DEPLOY_REFS_DIR = "${FLATPAK_DEPLOY_DIR}/refs"
 FLATPAK_DEPLOYDIR = "${WORKDIR}/deploy-flatpak"
 
 SSTATETASKS += "do_deploy_flatpak"
 do_deploy_flatpak[sstate-inputdirs] = "${FLATPAK_DEPLOYDIR}"
-do_deploy_flatpak[sstate-outputdirs] = "${FLATPAK_DEPLOY_REFS_DIR}/${PACKAGE_ARCH}/${PN}"
+do_deploy_flatpak[sstate-outputdirs] = "${FLATPAK_DEPLOY_REFS_DIR}/${FLATPAK_DEPLOY_ARCH}/${PN}"
 
 python do_deploy_flatpak_setscene () {
     sstate_setscene(d)

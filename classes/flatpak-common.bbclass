@@ -43,6 +43,17 @@ VFPK_BLOB_DIR = "${VFPK_TMPDIR}/deploy/images/${VFPK_MACHINE}/vfpk/${FLATPAK_ARC
 # collects it and removes it from the image.
 FLATPAK_BUNDLES_DIR = "${datadir}/flatpak-bundles"
 
+# Where producers deploy their refs (flatpak-deploy) and flatpak-repo-index
+# publishes them. Refs land in refs/${FLATPAK_DEPLOY_ARCH}/<pn>/.
+FLATPAK_DEPLOY_DIR ??= "${DEPLOY_DIR}/flatpak"
+FLATPAK_DEPLOY_ARCH ??= "${PACKAGE_ARCH}"
+
+# The multiconfig that builds runtimes with the baseline CPU tune of their
+# flatpak arch rather than MACHINE's (conf/multiconfig/vfpk-*-generic.conf),
+# for flatpak-bundle's FLATPAK_IMAGE_GENERIC. It deploys into this
+# configuration's FLATPAK_DEPLOY_DIR, under refs/<multiconfig>/.
+FLATPAK_GENERIC_MULTICONFIG = "${@'%s-generic' % d.getVar('VFPK_MULTICONFIG') if d.getVar('VFPK_MULTICONFIG') else ''}"
+
 # Free space every ostree repository the layer writes must leave on its
 # filesystem. ostree's default is 3% of the filesystem, which on a large
 # shared build disk refuses writes with plenty of room left.

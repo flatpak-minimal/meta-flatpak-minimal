@@ -43,6 +43,12 @@
 #   and says what is missing. LIC_FILES_CHKSUM defaults to the common license
 #   texts of those licenses.
 #
+#   The image is built for MACHINE, with its CPU tune, so the runtime only
+#   runs on devices that tune covers. FLATPAK_IMAGE_GENERIC = "1" builds it
+#   in FLATPAK_GENERIC_MULTICONFIG instead, with the flatpak arch's baseline
+#   tune, so one runtime commit serves every device of the arch. That
+#   multiconfig must be in BBMULTICONFIG.
+#
 # For mirrored and built refs, FLATPAK_REMOTE names the remote the content is installed
 # under, and so the origin it is updated from on the device. It must match a
 # remote shipped by flatpak-remotes.
@@ -63,10 +69,12 @@ FLATPAK_BUNDLE_FILE ??= ""
 FLATPAK_BUNDLE_REF ??= ""
 FLATPAK_BUNDLE_ALLOW_NO_ORIGIN ??= "0"
 FLATPAK_IMAGE ??= ""
+FLATPAK_IMAGE_GENERIC ??= "0"
 FLATPAK_BUILD_REMOTE ??= ""
-# Where flatpak-runtime-image deploys (flatpak-deploy.bbclass); an image's
-# package arch is the machine's.
-FLATPAK_IMAGE_DEPLOY = "${DEPLOY_DIR}/flatpak/refs/${MACHINE_ARCH}/${FLATPAK_IMAGE}"
+# Where flatpak-runtime-image deploys (flatpak-deploy.bbclass): under the
+# machine's package arch, or the generic multiconfig's name.
+FLATPAK_IMAGE_DEPLOY_ARCH ??= "${FLATPAK_DEPLOY_ARCH}"
+FLATPAK_IMAGE_DEPLOY = "${FLATPAK_DEPLOY_DIR}/refs/${FLATPAK_IMAGE_DEPLOY_ARCH}/${FLATPAK_IMAGE}"
 FLATPAK_IMAGE_REPO = "${FLATPAK_IMAGE_DEPLOY}/repo"
 
 # Flathub's CDN refuses requests whose user agent names libostree, which is
@@ -104,9 +112,20 @@ python () {
             d.setVar('FLATPAK_REMOTE', remote)
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', remote):
             bb.fatal("FLATPAK_REMOTE '%s' is not a remote name" % remote)
-        d.appendVarFlag('do_compile', 'depends', ' %s:do_deploy_flatpak' % image)
+        mc = d.getVar('FLATPAK_GENERIC_MULTICONFIG')
+        current = d.getVar('BB_CURRENT_MC')
+        if bb.utils.to_boolean(d.getVar('FLATPAK_IMAGE_GENERIC')) and mc != current:
+            if not mc:
+                raise bb.parse.SkipRecipe("no generic multiconfig for TARGET_ARCH %s" % d.getVar('TARGET_ARCH'))
+            if mc not in (d.getVar('BBMULTICONFIG') or '').split():
+                raise bb.parse.SkipRecipe("FLATPAK_IMAGE_GENERIC needs %s in BBMULTICONFIG" % mc)
+            d.appendVarFlag('do_compile', 'mcdepends', ' mc:%s:%s:%s:do_deploy_flatpak' % (current, mc, image))
+            d.setVar('FLATPAK_IMAGE_DEPLOY_ARCH', mc)
+        else:
+            d.appendVarFlag('do_compile', 'depends', ' %s:do_deploy_flatpak' % image)
         d.appendVarFlag('do_compile', 'prefuncs', ' flatpak_bundle_check_licenses')
-        # The image is built for this machine.
+        # The image comes from this configuration's build, whichever tune it
+        # was built with.
         d.setVar('PACKAGE_ARCH', d.getVar('MACHINE_ARCH'))
         if not d.getVar('LIC_FILES_CHKSUM'):
             # The licenses' texts, as the common license directory has them.
@@ -299,7 +318,8 @@ do_install () {
     chmod 0644 $dest/${PN}.meta
 }
 
-do_compile[vardeps] += "FLATPAK_REMOTE_REFS FLATPAK_REMOTE FLATPAK_BUNDLE_FILE FLATPAK_BUNDLE_REF FLATPAK_IMAGE"
+do_compile[vardeps] += "FLATPAK_REMOTE_REFS FLATPAK_REMOTE FLATPAK_BUNDLE_FILE FLATPAK_BUNDLE_REF FLATPAK_IMAGE \
+    FLATPAK_IMAGE_DEPLOY_ARCH"
 do_install[vardeps] += "FLATPAK_BUNDLE_ALLOW_NO_ORIGIN"
 
 do_configure[noexec] = "1"

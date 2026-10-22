@@ -12,6 +12,6 @@ HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
 LICENSE = "MIT"
 
-FLATPAK_PUBLISH_REPO = "${DEPLOY_DIR}/flatpak/repo-dev"
+FLATPAK_PUBLISH_REPO = "${FLATPAK_DEPLOY_DIR}/repo-dev"
 
 require flatpak-repo-index.inc
