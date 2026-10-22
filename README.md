@@ -278,7 +278,8 @@ image artifact:
 tmp/deploy/flatpak/
   refs/<package arch>/<pn>/repo    one repository per producing recipe
   refs/<package arch>/<pn>/licenses  (runtimes) licenses of their packages
-  repo/                            the publishable repository
+  repo/                            the repository devices update from
+  repo-dev/                        the same plus SDKs, for developers
 ```
 
 `bitbake flatpak-repo-index` merges every deployed ref into `repo/`, keeps
@@ -287,9 +288,15 @@ and checks it. For a ref that changed it generates a static delta from the
 commit published before, so an update downloads one file instead of every
 changed object; `FLATPAK_PUBLISH_DELTAS = "previous empty"` adds deltas
 from scratch for network installs, at roughly the repository's size again.
-A delta goes away with the commit it leads to. Sync `repo/` to the remote's URL and devices update from
-it. Like `package-index`, it publishes what has been deployed;
-`FLATPAK_PUBLISH_RECIPES` builds named producers first.
+A delta goes away with the commit it leads to. Sync `repo/` to the remote's
+URL and devices update from it. Like `package-index`, it publishes what has
+been deployed; `FLATPAK_PUBLISH_RECIPES` builds named producers first.
+`FLATPAK_PUBLISH_EXCLUDE` leaves refs out; the device repository leaves out
+SDKs.
+
+`bitbake flatpak-repo-index-dev` does the same into `repo-dev/`, SDKs
+included. Publish it apart from the device repository, for developers to
+build apps against.
 
 A repository holds one commit per ref. Two builds of the same ref for
 different CPU tunes or machines (a Cortex-A57 and a Cortex-A76 build of one
@@ -303,9 +310,16 @@ With meta-flutter, the layer provides the Flutter runtime:
 | --- | --- |
 | `flutter-platform-runtime-image` | `runtime/org.flatpak_minimal.Flutter.Platform/<arch>/<flutter version>`: flutter-engine, ivi-homescreen, Mesa, fonts |
 | `flutter-platform-runtime` | that runtime, packaged |
+| `flutter-platform-sdk-image` | `runtime/org.flatpak_minimal.Flutter.Sdk/<arch>/<flutter version>`: the runtime's packages plus their development files, GCC, cmake, ninja, pkg-config, the engine's headers and SDK files |
 
 The branch is the Flutter SDK version, so an app's AOT code always meets the
 engine it was compiled for.
+
+The SDK is built from the same packages as the runtime and names it with
+`runtime=`, so native code (FFI libraries, plugins, embedders) built with
+flatpak-builder in the SDK runs in the runtime. It has no Dart AOT
+compiler: meta-flutter builds `gen_snapshot` for the build machine only, so
+an app's Dart code is still compiled on the host.
 
 `FLATPAK_RUNTIME_GL = "extension"` moves the GL stack out of a runtime into
 its own extension, `<runtime>.GL.default`, built from the same image. The
@@ -315,7 +329,9 @@ libraries on the linker path. Another build can then ship a different GPU's
 stack as `<runtime>.GL.<name>`, picked on the device with
 `FLATPAK_GL_DRIVERS=<name>`. The libraries move whole (no libglvnd), so a
 vendor stack with its own `libEGL` fits too. The default, `runtime`, keeps
-Mesa in the runtime. A Flutter app opts in with:
+Mesa in the runtime.
+
+A Flutter app opts in with:
 
 ```
 inherit flutter-app-native flatpak-flutter-app
