@@ -113,6 +113,40 @@ vfpk-runner.sh --arch aarch64 \
     --input DIR --output installation.tar -- 'flatpak install --system ...'
 ```
 
+### vfpk on a development host
+
+`vfpk` keeps a flatpak system installation for a target architecture in a tar
+and runs flatpak on it in the guest, one boot per command. It is installed by
+`vfpk-native` next to the runner, and `vfpk-tarball` packages it as a
+standalone installer with the guest blobs of one architecture and its own QEMU
+and mke2fs:
+
+```
+bitbake mc:vfpk-aarch64:vfpk-tarball
+./tmp-vfpk-aarch64/deploy/sdk/vfpk-standalone-x86_64-aarch64.sh -d ~/vfpk -y
+. ~/vfpk/environment-setup-x86_64-oesdk-linux
+
+vfpk install tmp/deploy/flatpak/repo-dev org.flatpak_minimal.Flutter.Platform//3.47.7
+vfpk install app.flatpak
+vfpk --network flatpak remote-add flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+vfpk flatpak list
+vfpk run org.example.Tool --version
+```
+
+The installation is `~/.local/share/vfpk/<arch>/flatpak.tar` (`--state`), with
+numeric owners. A command that fails leaves it as it was. Unpacked as root
+into `/var/lib/flatpak` on a device of the same architecture, it is the
+installation built here. `vfpk run` has no display, so it suits command-line
+tools and tests, not GUI apps.
+
+From a build tree, point vfpk at the blobs instead:
+
+```
+bitbake vfpk-native -caddto_recipe_sysroot
+oe-run-native vfpk-native vfpk \
+    --blob-dir tmp-vfpk-aarch64/deploy/images/qemuarm64/vfpk/aarch64 flatpak list
+```
+
 ### Flatpak content from outside the build
 
 `classes/flatpak-bundle.bbclass` packages flatpak content built elsewhere, so
