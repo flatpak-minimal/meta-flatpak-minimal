@@ -14,7 +14,7 @@ HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
 LICENSE = "MIT"
 
-FLATPAK_PUBLISH_REPO = "${DEPLOY_DIR}/flatpak/repo"
+FLATPAK_PUBLISH_REPO = "${FLATPAK_DEPLOY_DIR}/repo"
 # Devices never need an SDK or its extensions.
 FLATPAK_PUBLISH_EXCLUDE ?= "runtime/[^/]+[.]Sdk([.][^/]+)?/.+"
 

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# Merge the refs flatpak producers deployed under ${DEPLOY_DIR}/flatpak/refs
+# Merge the refs flatpak producers deployed under ${FLATPAK_DEPLOY_DIR}/refs
 # into the publishable repository FLATPAK_PUBLISH_REPO. Shared by
 # flatpak-repo-index (the repository devices update from) and
 # flatpak-repo-index-dev (the one developers build against).
@@ -22,15 +22,16 @@ deltask do_install
 deltask do_populate_lic
 deltask do_populate_sysroot
 
-FLATPAK_PUBLISH_REFS_DIR = "${DEPLOY_DIR}/flatpak/refs"
-FLATPAK_PUBLISH_REPO ??= "${DEPLOY_DIR}/flatpak/repo"
+FLATPAK_PUBLISH_REFS_DIR = "${FLATPAK_DEPLOY_DIR}/refs"
+FLATPAK_PUBLISH_REPO ??= "${FLATPAK_DEPLOY_DIR}/repo"
 
 # Refs to leave out, as regular expressions matched against the whole ref.
 FLATPAK_PUBLISH_EXCLUDE ??= ""
 
 # Package archs (directories under refs/) to publish; empty publishes all.
 # Two builds of one ref for different CPU tunes or machines give different
-# commits, and a repository holds one per ref: name the build to publish.
+# commits, and a repository holds one per ref: name the build to publish. A
+# generic multiconfig deploys under its own name (vfpk-aarch64-generic).
 FLATPAK_PUBLISH_PACKAGE_ARCHS ??= ""
 
 # Recipes to build first; their refs are published either way once deployed.
