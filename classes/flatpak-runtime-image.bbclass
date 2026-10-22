@@ -64,6 +64,9 @@ IMAGE_FSTYPES = ""
 IMAGE_FEATURES = ""
 IMAGE_LINGUAS = ""
 KERNELDEPMODDEPEND = ""
+KERNEL_DEPLOY_DEPEND = ""
+# Bootloaders and firmware the machine builds with its images.
+EXTRA_IMAGEDEPENDS = ""
 
 FLATPAK_RUNTIME_REPO = "${FLATPAK_DEPLOYDIR}/repo"
 
