@@ -126,7 +126,7 @@ bitbake mc:vfpk-aarch64:vfpk-tarball
 ./tmp-vfpk-aarch64/deploy/sdk/vfpk-standalone-x86_64-aarch64.sh -d ~/vfpk -y
 . ~/vfpk/environment-setup-x86_64-oesdk-linux
 
-vfpk install tmp/deploy/flatpak/repo-dev org.flatpak_minimal.Flutter.Platform//3.47.7
+vfpk install tmp/deploy/flatpak/repo-dev org.flatpak_minimal.Platform//wrynose
 vfpk install app.flatpak
 vfpk --network flatpak remote-add flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 vfpk flatpak list
@@ -275,18 +275,24 @@ Anything else, such as a background updater, needs a polkit rule.
 
 ### Flatpak content built by this build
 
-Two classes turn build output into flatpak refs, committed with ostree-native
-into ostree repositories:
+Three classes turn build output into flatpak refs, committed with
+ostree-native into ostree repositories:
 
 - `flatpak-runtime-image` makes an image a runtime: its `/usr` becomes the
   runtime's files and its `/etc` the runtime's `/etc`, with the linker setup
   flatpak expects (`bin/ldconfig`, and app library paths in `ld.so.conf`
   ahead of the image's own). It needs `usrmerge`. A flatpak-bundle recipe
   with `FLATPAK_IMAGE = "<image>"` packages it.
+- `flatpak-extension-image` makes an image an extension of such a runtime:
+  it holds the files of the image's packages the runtime's image doesn't
+  have, so the two are ABI-matched and nothing is shipped twice. A
+  flatpak-bundle recipe packages it the same way.
 - `flatpak-app` (generic) and `flatpak-flutter-app` (meta-flutter apps) add a
   `${PN}-flatpak` package to an app recipe, holding an app ref made from part
   of what the recipe installs. `${prefix}` maps to `/app`, so installed paths
   keep working, and links into the rest of `${prefix}` resolve in the runtime.
+  `FLATPAK_APP_EXTENSIONS` declares extensions the app mounts under `/app`;
+  its package depends on theirs.
 
 Both kinds of package install through `flatpak-cross-install` like any other
 bundle: `IMAGE_INSTALL += "<app>-flatpak"` or `BUNDLED_FLATPAKS`. The app
@@ -364,26 +370,40 @@ The multiconfig uses the main configuration's distro and `local.conf`, has
 its own `TMPDIR`, and deploys refs into the main `tmp/deploy/flatpak/`
 under `refs/vfpk-<arch>-generic/`, so `flatpak-repo-index` publishes them.
 Build an SDK or other producer there with
-`bitbake mc:vfpk-aarch64-generic:flutter-platform-sdk-image`. Apps are still
+`bitbake mc:vfpk-aarch64-generic:flatpak-platform-sdk-image`. Apps are still
 built for `MACHINE` and run on the generic runtime as on their own. Delete the main and generic `TMPDIR`s together, or the
 generic one keeps believing its refs are deployed.
 
-With meta-flutter, the layer provides the Flutter runtime:
+#### The base runtime and Flutter
+
+The layer's runtime is toolkit-neutral; Flutter's engine is an extension:
 
 | Recipe | Content |
 | --- | --- |
-| `flutter-platform-runtime-image` | `runtime/org.flatpak_minimal.Flutter.Platform/<arch>/<flutter version>`: flutter-engine, ivi-homescreen, Mesa, fonts |
-| `flutter-platform-runtime` | that runtime, packaged |
-| `flutter-platform-sdk-image` | `runtime/org.flatpak_minimal.Flutter.Sdk/<arch>/<flutter version>`: the runtime's packages plus their development files, GCC, cmake, ninja, pkg-config, the engine's headers and SDK files |
+| `flatpak-platform-runtime-image` | `runtime/org.flatpak_minimal.Platform/<arch>/<release>`: Wayland, Mesa, GLib, GStreamer, fonts, certificates, sqlite; with meta-flutter, ivi-homescreen |
+| `flatpak-platform-runtime` | that runtime, packaged |
+| `flatpak-platform-sdk-image` | `runtime/org.flatpak_minimal.Sdk/<arch>/<release>`: the runtime's packages plus their development files, GCC, cmake, ninja, pkg-config |
+| `flutter-engine-extension-image` | `runtime/org.flatpak_minimal.Flutter.Engine/<arch>/<flutter version>-<release>`: `libflutter_engine.so` and its ICU data (meta-flutter) |
+| `flutter-engine-extension` | that extension, packaged |
+| `flutter-sdk-extension-image` | `runtime/org.flatpak_minimal.Sdk.Extension.flutter<version>/<arch>/<release>`: the engine plus its headers and SDK files (meta-flutter) |
 
-The branch is the Flutter SDK version, so an app's AOT code always meets the
-engine it was compiled for.
+`<release>` is the oe-core release (`wrynose`), whose ABI the runtime
+carries; `FLATPAK_PLATFORM_BRANCH` overrides it. The runtime has the one
+embedder, ivi-homescreen, which loads `libflutter_engine.so` from the app's
+bundle. A Flutter app's metadata asks for the engine of its Flutter version
+on its runtime branch, which flatpak installs with the app and mounts at
+`/app/flutter`, and the bundle's engine links point there. Apps on
+different Flutter versions share the runtime and its embedder, each version
+adds one engine, and a Mesa fix is one runtime update for all of them.
 
-The SDK is built from the same packages as the runtime and names it with
-`runtime=`, so native code (FFI libraries, plugins, embedders) built with
-flatpak-builder in the SDK runs in the runtime. It has no Dart AOT
-compiler: meta-flutter builds `gen_snapshot` for the build machine only, so
-an app's Dart code is still compiled on the host.
+The SDK names the runtime with `runtime=`, so native code built with
+flatpak-builder in the SDK runs in the runtime. The Flutter SDK extension
+carries the Flutter version in its ID, since an SDK extension's branch is the
+SDK's, and mounts at `/usr/lib/sdk/flutter<version>`, with an `enable.sh`
+that sets `PATH`, `CPATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH` and
+`FLUTTER_ENGINE`. There is no Dart AOT compiler: meta-flutter builds
+`gen_snapshot` for the build machine only, so an app's Dart code is still
+compiled on the host.
 
 To build with it on a workstation, publish `repo-dev`, add it as a remote
 and point flatpak-builder at the SDK. Another arch builds through
@@ -391,8 +411,9 @@ qemu-user (binfmt):
 
 ```
 flatpak --user remote-add --no-gpg-verify vfpk-dev file:///path/to/tmp/deploy/flatpak/repo-dev
-flatpak --user install --arch=aarch64 vfpk-dev \
-    org.flatpak_minimal.Flutter.Sdk//3.47.7 org.flatpak_minimal.Flutter.Platform//3.47.7
+flatpak --user install --arch=aarch64 vfpk-dev org.flatpak_minimal.Sdk//wrynose \
+    org.flatpak_minimal.Platform//wrynose org.flatpak_minimal.Sdk.Extension.flutter3_47_7//wrynose \
+    org.flatpak_minimal.Flutter.Engine//3.47.7-wrynose
 flatpak-builder --arch=aarch64 --repo=repo build-dir org.example.App.yml
 ```
 
@@ -400,19 +421,36 @@ with a manifest such as:
 
 ```yaml
 app-id: org.example.App
-runtime: org.flatpak_minimal.Flutter.Platform
-runtime-version: '3.47.7'
-sdk: org.flatpak_minimal.Flutter.Sdk
+runtime: org.flatpak_minimal.Platform
+runtime-version: 'wrynose'
+sdk: org.flatpak_minimal.Sdk
+sdk-extensions:
+  - org.flatpak_minimal.Sdk.Extension.flutter3_47_7
+add-extensions:
+  org.flatpak_minimal.Flutter.Engine:
+    directory: flutter
+    version: '3.47.7-wrynose'
+build-options:
+  env:
+    CPATH: /usr/lib/sdk/flutter3_47_7/include
+    FLUTTER_ENGINE: /usr/lib/sdk/flutter3_47_7/share/flutter/3.47.7/release
 command: example
 modules:
   - name: example
     buildsystem: cmake-ninja
+    post-install:
+      - install -d /app/flutter
     sources:
       - type: dir
         path: src
 ```
 
-The branch is the Flutter version the layer builds.
+`flutter_embedder.h` is then on the include path, and code links the engine
+with `-L$FLUTTER_ENGINE/lib -lflutter_engine` and an rpath of
+`/app/flutter/share/flutter/3.47.7/release/lib`. `add-extensions` gives the
+app the same engine extension point `flatpak-flutter-app` writes; the
+`post-install` line creates its mount point, which `/app` needs since it is
+read-only at run time.
 
 `FLATPAK_RUNTIME_GL = "extension"` moves the GL stack out of a runtime into
 its own extension, `<runtime>.GL.default`, built from the same image. The
@@ -431,7 +469,9 @@ inherit flutter-app-native flatpak-flutter-app
 FLATPAK_APP_ID = "org.example.App"
 ```
 
-and runs as `homescreen -b /app/share/flutter/<app>/<version>/release`.
+and runs as `homescreen -b /app/share/flutter/<app>/<version>/release` on
+`org.flatpak_minimal.Platform`, with the engine extension of its Flutter
+version.
 `flatpak-minimal-appstream-dart-flathub-catalog` is packaged this way.
 
 ### Testing

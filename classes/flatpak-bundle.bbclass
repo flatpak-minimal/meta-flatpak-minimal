@@ -33,9 +33,10 @@
 #   it installs, but can never be updated in the field; flatpak-cross-install
 #   refuses it unless FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = "1".
 #
-#   A runtime built by this build (flatpak-runtime-image):
+#   A runtime or extension built by this build (flatpak-runtime-image,
+#   flatpak-extension-image):
 #
-#     FLATPAK_IMAGE = "flutter-platform-runtime-image"
+#     FLATPAK_IMAGE = "flatpak-platform-runtime-image"
 #
 #   The image's deployed repository is copied whole. FLATPAK_REMOTE defaults
 #   to FLATPAK_BUILD_REMOTE. LICENSE must name every license of the packages
