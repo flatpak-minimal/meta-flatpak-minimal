@@ -60,9 +60,27 @@ FLATPAK_GENERIC_MULTICONFIG = "${@'%s-generic' % d.getVar('VFPK_MULTICONFIG') if
 FLATPAK_REPO_MIN_FREE ??= "1GB"
 
 def flatpak_license_names(expression):
-    """The license names in a LICENSE expression, without its operators."""
+    """The license names in a LICENSE expression, without its operators.
+
+    LICENSE arrives here from two directions: recipes in this layer, which
+    spell conjunctions '&', and pkgdata for every package installed in an
+    image, which carries whatever the recipe that built it wrote. oe-core
+    accepts both spellings and normalizes one into the other --
+    _substitute_legacy_license() rewrites '&' to AND and '|' to OR before
+    parsing as SPDX -- so an expression reaches this function with AND, OR
+    or WITH in it, and those words match the name pattern below.
+
+    Left in, they become licenses: a runtime deploys a list naming 'AND',
+    and the check in flatpak-bundle.bbclass then demands that every recipe
+    building a bundle declare it.
+    """
     import re
-    return set(re.findall(r'[A-Za-z0-9.+_-]+', expression or ''))
+    # SPDX spells these uppercase, and so does oe-core after substitution,
+    # so an uppercase comparison cannot swallow a real name. Lowercase
+    # license ids are common here: curl, blessing, bzip2-1.0.6.
+    operators = ('AND', 'OR', 'WITH')
+    return {name for name in re.findall(r'[A-Za-z0-9.+_-]+', expression or '')
+            if name not in operators}
 
 # Where the installation built in the guest ends up:
 #   rootfs    - unpacked into ${IMAGE_ROOTFS}/var/lib/flatpak. Only valid when
