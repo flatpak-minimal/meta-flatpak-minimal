@@ -6,7 +6,7 @@
 # org.flatpak_minimal.Platform and org.flatpak_minimal.Sdk: the layer's base
 # runtime and its SDK. A Wayland and GLES userspace with fonts and
 # certificates, and nothing toolkit-specific: toolkits come as extensions
-# (org.flatpak_minimal.Flutter.Engine) or in the apps. The branch is the
+# (org.flatpak_minimal.Flutter.Engine.<mode>) or in the apps. The branch is the
 # oe-core release, FLATPAK_PLATFORM_BRANCH.
 
 REQUIRED_DISTRO_FEATURES = "opengl usrmerge wayland"
