@@ -130,8 +130,13 @@ python () {
         d.setVar('PACKAGE_ARCH', d.getVar('MACHINE_ARCH'))
         if not d.getVar('LIC_FILES_CHKSUM'):
             # The licenses' texts, as the common license directory has them.
+            # A license paired with an exception has no text under that
+            # name; take the text of each half.
             files = []
-            for name in sorted(flatpak_license_names(d.getVar('LICENSE'))):
+            names = set()
+            for unit in flatpak_license_names(d.getVar('LICENSE')):
+                names.update(unit.split(' WITH '))
+            for name in sorted(names):
                 path = os.path.join(d.getVar('COMMON_LICENSE_DIR'), name)
                 if os.path.isfile(path):
                     files.append('file://%s;md5=%s' % (path, bb.utils.md5_file(path)))

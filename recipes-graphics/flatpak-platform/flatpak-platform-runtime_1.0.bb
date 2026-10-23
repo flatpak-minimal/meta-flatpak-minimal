@@ -19,6 +19,11 @@ LICENSE = "0BSD & Apache-2.0 & BSD-1-Clause & BSD-2-Clause & BSD-3-Clause & \
            MIT & MIT-open-group & MPL-2.0 & Unicode-DFS-2016 & X11 & Zlib & \
            blessing & bzip2-1.0.6 & curl"
 
+# x86-64 mesa builds the LLVM-backed gallium drivers, so mesa-megadriver
+# pulls libllvm into the runtime and the runtime carries its exception. No
+# other arch does, and naming it unconditionally warns there instead.
+LICENSE:append:x86-64 = " & Apache-2.0 WITH LLVM-exception"
+
 inherit flatpak-bundle
 
 FLATPAK_IMAGE = "flatpak-platform-runtime-image"
