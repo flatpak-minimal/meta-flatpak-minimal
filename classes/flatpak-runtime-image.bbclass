@@ -31,7 +31,10 @@
 #
 # which become sdk= in the runtime's metadata and runtime= in the SDK's, so
 # flatpak-builder builds in the SDK and runs in the runtime. The SDK image
-# installs the runtime's packages plus development files and tools.
+# installs the runtime's packages plus development files and tools. An SDK
+# also declares the ${FLATPAK_RUNTIME_ID}.Extension extension point at
+# ${libdir}/sdk, where flatpak-builder's sdk-extensions are mounted, each in
+# the subdirectory named by the last part of its ID.
 #
 # FLATPAK_RUNTIME_GL picks where the GL stack goes:
 #
@@ -67,6 +70,9 @@ KERNELDEPMODDEPEND = ""
 KERNEL_DEPLOY_DEPEND = ""
 # Bootloaders and firmware the machine builds with its images.
 EXTRA_IMAGEDEPENDS = ""
+# Nothing in a sandbox authenticates: libpam, which libcap links with PAM
+# enabled, comes without its configuration and modules.
+BAD_RECOMMENDATIONS += "libpam-runtime"
 
 FLATPAK_RUNTIME_REPO = "${FLATPAK_DEPLOYDIR}/repo"
 
@@ -218,6 +224,19 @@ python do_deploy_flatpak () {
         metadata += 'sdk=%s/%s\n' % (sdk, tail)
     subject = '%s %s' % (d.getVar('PN'), d.getVar('PV'))
 
+    if platform:
+        # SDK extensions (flatpak-builder sdk-extensions) mount at
+        # ${libdir}/sdk/<last part of their ID>, as in Freedesktop's SDK.
+        sdk_dir = d.getVar('libdir')[len(d.getVar('prefix')) + 1:] + '/sdk'
+        bb.utils.mkdirhier(os.path.join(files, sdk_dir))
+        metadata += ('\n[Extension %s.Extension]\n'
+                     'directory=%s\n'
+                     'subdirectories=true\n'
+                     'no-autodownload=true\n'
+                     'autodelete=false\n'
+                     'version=%s\n'
+                     % (runtime_id, sdk_dir, d.getVar('FLATPAK_RUNTIME_BRANCH')))
+
     if d.getVar('FLATPAK_RUNTIME_GL') == 'extension':
         gl_tree = os.path.join(work, 'gl')
         moved = flatpak_runtime_split_gl(d, files, os.path.join(gl_tree, 'files'))
@@ -256,6 +275,9 @@ python do_deploy_flatpak () {
 
     with open(os.path.join(d.getVar('FLATPAK_DEPLOYDIR'), 'licenses'), 'w') as f:
         f.write(''.join(name + '\n' for name in flatpak_runtime_licenses(d)))
+    # flatpak-extension-image leaves these out of extensions of the runtime.
+    with open(os.path.join(d.getVar('FLATPAK_DEPLOYDIR'), 'packages'), 'w') as f:
+        f.write(''.join(pkg + '\n' for pkg in sorted(flatpak_runtime_packages(d))))
 }
 do_deploy_flatpak[cleandirs] = "${FLATPAK_DEPLOYDIR}"
 do_deploy_flatpak[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID FLATPAK_RUNTIME_GL \

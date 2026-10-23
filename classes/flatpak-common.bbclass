@@ -54,6 +54,13 @@ FLATPAK_DEPLOY_ARCH ??= "${PACKAGE_ARCH}"
 # configuration's FLATPAK_DEPLOY_DIR, under refs/<multiconfig>/.
 FLATPAK_GENERIC_MULTICONFIG = "${@'%s-generic' % d.getVar('VFPK_MULTICONFIG') if d.getVar('VFPK_MULTICONFIG') else ''}"
 
+# The layer's base runtime and SDK (recipes-graphics/flatpak-platform). Their
+# branch is the oe-core release whose ABI they carry.
+FLATPAK_PLATFORM_ID = "org.flatpak_minimal.Platform"
+FLATPAK_PLATFORM_SDK_ID = "org.flatpak_minimal.Sdk"
+FLATPAK_PLATFORM_BRANCH ??= "${@(d.getVar('LAYERSERIES_CORENAMES') or 'unknown').split()[0]}"
+FLATPAK_PLATFORM_PACKAGE = "flatpak-platform-runtime"
+
 # Free space every ostree repository the layer writes must leave on its
 # filesystem. ostree's default is 3% of the filesystem, which on a large
 # shared build disk refuses writes with plenty of room left.
