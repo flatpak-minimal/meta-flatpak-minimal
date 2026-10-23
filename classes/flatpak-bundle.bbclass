@@ -181,8 +181,11 @@ python flatpak_bundle_check_licenses () {
     path = os.path.join(d.getVar('FLATPAK_IMAGE_DEPLOY'), 'licenses')
     if not os.path.isfile(path):
         bb.fatal("%s deployed no license list at %s" % (d.getVar('FLATPAK_IMAGE'), path))
+    # One unit per line, not whitespace-separated: a license paired with an
+    # exception is 'GPL-3.0-or-later WITH GCC-exception-3.1', and splitting
+    # on whitespace takes it apart again.
     with open(path) as f:
-        runtime = set(f.read().split())
+        runtime = set(line.strip() for line in f if line.strip())
     declared = flatpak_license_names(d.getVar('LICENSE'))
     missing = sorted(runtime - declared)
     if missing:
