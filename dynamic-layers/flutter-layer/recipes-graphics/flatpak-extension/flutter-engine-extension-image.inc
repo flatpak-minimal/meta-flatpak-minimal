@@ -9,8 +9,7 @@ SUMMARY = "Flutter engine flatpak extension, ${FLUTTER_ENGINE_EXTENSION_MODE} mo
 DESCRIPTION = "libflutter_engine.so of the ${FLUTTER_ENGINE_EXTENSION_MODE} runtime \
                mode and its ICU data, as an extension of \
                org.flatpak_minimal.Platform. Apps of that mode packaged with \
-               flatpak-flutter-app mount it at /app/flutter and run with the \
-               runtime's ivi-homescreen."
+               flatpak-flutter-app mount it at /app/flutter."
 HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
 LICENSE = "MIT"

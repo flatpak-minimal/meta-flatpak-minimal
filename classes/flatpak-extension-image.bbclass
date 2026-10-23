@@ -25,6 +25,10 @@
 # whatever refers to them has to translate, as flatpak-app does for symlinks
 # with FLATPAK_APP_EXTENSION_PATHS.
 #
+# FLATPAK_EXTENSION_EXCLUDE_RECIPES leaves the packages of the listed recipes
+# out too, though IMAGE_INSTALL depends on them: another extension carries
+# them.
+#
 # FLATPAK_EXTENSION_MOUNT, the directory the extension is mounted at, adds an
 # enable.sh that puts its bin, include, lib and pkgconfig directories on the
 # usual search paths, as Freedesktop's SDK extensions do;
@@ -37,6 +41,7 @@ FLATPAK_EXTENSION_ID ??= ""
 FLATPAK_EXTENSION_BRANCH ??= ""
 FLATPAK_EXTENSION_BASE ??= ""
 FLATPAK_EXTENSION_OF ??= ""
+FLATPAK_EXTENSION_EXCLUDE_RECIPES ??= ""
 FLATPAK_EXTENSION_MOUNT ??= ""
 FLATPAK_EXTENSION_ENABLE_VARS ??= ""
 FLATPAK_EXTENSION_REF = "runtime/${FLATPAK_EXTENSION_ID}/${FLATPAK_ARCH}/${FLATPAK_EXTENSION_BRANCH}"
@@ -84,7 +89,8 @@ python () {
 }
 
 def flatpak_extension_packages(d):
-    """pkgdata of the installed packages the base runtime does not have."""
+    """pkgdata of the installed packages the base runtime does not have,
+    without those of FLATPAK_EXTENSION_EXCLUDE_RECIPES."""
     import oe.packagedata
 
     path = d.getVar('FLATPAK_EXTENSION_BASE_PACKAGES')
@@ -93,13 +99,16 @@ def flatpak_extension_packages(d):
     with open(path) as f:
         base = set(f.read().split())
 
+    recipes = (d.getVar('FLATPAK_EXTENSION_EXCLUDE_RECIPES') or '').split()
     packages = {}
     with open(d.getVar('IMAGE_MANIFEST')) as f:
         for line in f:
             if line.strip() and line.split()[0] not in base:
                 pkg = line.split()[0]
-                packages[pkg] = oe.packagedata.read_pkgdatafile(
+                data = oe.packagedata.read_pkgdatafile(
                     os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', pkg))
+                if data.get('PN') not in recipes:
+                    packages[pkg] = data
     if not packages:
         bb.fatal("every package of the image is in %s; the extension would be empty"
                  % d.getVar('FLATPAK_EXTENSION_BASE'))
@@ -181,6 +190,6 @@ python do_deploy_flatpak () {
 }
 do_deploy_flatpak[cleandirs] = "${FLATPAK_DEPLOYDIR}"
 do_deploy_flatpak[vardeps] += "FLATPAK_EXTENSION_ID FLATPAK_EXTENSION_BRANCH FLATPAK_EXTENSION_BASE \
-    FLATPAK_EXTENSION_OF FLATPAK_EXTENSION_MOUNT FLATPAK_EXTENSION_ENABLE_VARS FLATPAK_GPGID"
+    FLATPAK_EXTENSION_OF FLATPAK_EXTENSION_EXCLUDE_RECIPES FLATPAK_EXTENSION_MOUNT FLATPAK_EXTENSION_ENABLE_VARS FLATPAK_GPGID"
 do_deploy_flatpak[vardepsexclude] += "FLATPAK_GPGHOME FLATPAK_EXTENSION_BASE_PACKAGES"
 addtask deploy_flatpak after do_image before do_image_complete

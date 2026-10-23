@@ -376,16 +376,19 @@ generic one keeps believing its refs are deployed.
 
 #### The base runtime and Flutter
 
-The layer's runtime is toolkit-neutral; Flutter's engine is an extension:
+The layer's runtime is toolkit-neutral; Flutter's embedder and engine are
+extensions:
 
 | Recipe | Content |
 | --- | --- |
-| `flatpak-platform-runtime-image` | `runtime/org.flatpak_minimal.Platform/<arch>/<release>`: Wayland, Mesa, GLib, GStreamer, fonts, certificates, sqlite; with meta-flutter, ivi-homescreen |
+| `flatpak-platform-runtime-image` | `runtime/org.flatpak_minimal.Platform/<arch>/<release>`: Wayland, Mesa, GLib, GStreamer, fonts, certificates, sqlite |
 | `flatpak-platform-runtime` | that runtime, packaged |
 | `flatpak-platform-sdk-image` | `runtime/org.flatpak_minimal.Sdk/<arch>/<release>`: the runtime's packages plus their development files, GCC, cmake, ninja, pkg-config |
+| `flutter-homescreen-extension-image` | `runtime/org.flatpak_minimal.Flutter.Homescreen/<arch>/<release>`: ivi-homescreen, its plugin library and libc++ (meta-flutter) |
+| `flutter-homescreen-extension` | that extension, packaged |
 | `flutter-engine-<mode>-extension-image` | `runtime/org.flatpak_minimal.Flutter.Engine.<mode>/<arch>/<engine version>-<release>`: that mode's `libflutter_engine.so` and its ICU data (meta-flutter) |
 | `flutter-engine-<mode>-extension` | that extension, packaged |
-| `flutter-sdk-extension-image` | `runtime/org.flatpak_minimal.Sdk.Extension.flutter<engine version>/<arch>/<release>`: the engine of `FLUTTER_SDK_EXTENSION_MODES` (default `release`) plus its headers and SDK files (meta-flutter) |
+| `flutter-sdk-extension-image` | `runtime/org.flatpak_minimal.Sdk.Extension.flutter<engine version>/<arch>/<release>`: the engine of `FLUTTER_SDK_EXTENSION_MODES` (default `release`) plus its headers and SDK files, and ivi-homescreen's plugin headers and library (meta-flutter) |
 
 `<mode>` is the engine's runtime mode as meta-flutter names it: `debug`,
 `profile`, `release` or `jit_release` (recipes `flutter-engine-jit-release-*`,
@@ -398,15 +401,20 @@ version names in `bin/internal/engine.version`. A snapshot only runs on the
 engine it was compiled for, so the commit is in every engine ref.
 
 `<release>` is the oe-core release (`wrynose`), whose ABI the runtime
-carries; `FLATPAK_PLATFORM_BRANCH` overrides it. The runtime has the one
-embedder, ivi-homescreen, which loads `libflutter_engine.so` from the app's
-bundle. A Flutter app's metadata asks for the engine of its mode
-(`FLATPAK_FLUTTER_RUNTIME_MODE`) and engine version on its runtime branch,
-which flatpak installs with the app and mounts at `/app/flutter`, and the
-bundle's engine links point there. Every mode and engine version is its own
-ref, so they install side by side; apps share the runtime and its embedder,
-each mode and engine in use adds one extension, and a Mesa fix is one
-runtime update for all of them.
+carries; `FLATPAK_PLATFORM_BRANCH` overrides it. A Flutter app's metadata
+asks for two extensions, which flatpak installs with the app:
+
+- the embedder, ivi-homescreen, at `/app/homescreen`. It loads
+  `libflutter_engine.so` from the app's bundle through the embedder API and
+  has no runtime mode or engine version of its own, so it is branched by the
+  runtime only: one install serves every Flutter app, and a fix to it is an
+  update in place.
+- the engine of the app's mode (`FLATPAK_FLUTTER_RUNTIME_MODE`) and engine
+  version, at `/app/flutter`, where the bundle's engine links point. Every
+  mode and engine version is its own ref, so they install side by side.
+
+Apps share the runtime and the embedder, each mode and engine in use adds
+one extension, and a Mesa fix is one runtime update for all of them.
 
 The SDK names the runtime with `runtime=`, so native code built with
 flatpak-builder in the SDK runs in the runtime. The Flutter SDK extension
@@ -462,7 +470,9 @@ with `-L$FLUTTER_ENGINE_RELEASE/lib -lflutter_engine` and an rpath of
 `/app/flutter/share/flutter/3.47.7/release/lib`. `add-extensions` gives the
 app the same engine extension point `flatpak-flutter-app` writes; the
 `post-install` line creates its mount point, which `/app` needs since it is
-read-only at run time.
+read-only at run time. An app that runs ivi-homescreen adds
+`org.flatpak_minimal.Flutter.Homescreen` (`directory: homescreen`,
+`version: 'wrynose'`, `add-ld-path: lib`) the same way.
 
 `FLATPAK_RUNTIME_GL = "extension"` moves the GL stack out of a runtime into
 its own extension, `<runtime>.GL.default`, built from the same image. The
@@ -481,9 +491,9 @@ inherit flutter-app-native flatpak-flutter-app
 FLATPAK_APP_ID = "org.example.App"
 ```
 
-and runs as `homescreen -b /app/share/flutter/<app>/<version>/release` on
-`org.flatpak_minimal.Platform`, with the engine extension of its mode and
-Flutter version.
+and runs as `/app/homescreen/bin/homescreen -b /app/share/flutter/<app>/<version>/release`
+on `org.flatpak_minimal.Platform`, with the homescreen extension and the
+engine extension of its mode and engine version.
 `flatpak-minimal-appstream-dart-flathub-catalog` is packaged this way.
 
 ### Testing

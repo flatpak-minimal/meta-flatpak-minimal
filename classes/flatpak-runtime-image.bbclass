@@ -36,11 +36,6 @@
 # ${libdir}/sdk, where flatpak-builder's sdk-extensions are mounted, each in
 # the subdirectory named by the last part of its ID.
 #
-# FLATPAK_RUNTIME_EXCLUDE_RECIPES keeps the files of packages built by the
-# listed recipes out of the runtime, though the image installs them as
-# dependencies of what it ships; an extension carries them instead. The
-# runtime's package and license lists leave them out too.
-#
 # FLATPAK_RUNTIME_GL picks where the GL stack goes:
 #
 #   runtime    in the runtime, like everything else (default)
@@ -81,8 +76,6 @@ BAD_RECOMMENDATIONS += "libpam-runtime"
 
 FLATPAK_RUNTIME_REPO = "${FLATPAK_DEPLOYDIR}/repo"
 
-FLATPAK_RUNTIME_EXCLUDE_RECIPES ??= ""
-
 FLATPAK_RUNTIME_GL ??= "runtime"
 FLATPAK_RUNTIME_GL_NAME ??= "default"
 FLATPAK_RUNTIME_GL_RECIPES ??= "mesa"
@@ -121,58 +114,18 @@ python () {
         bb.fatal("FLATPAK_RUNTIME_GL_VERSION '%s' is not a flatpak branch" % d.getVar('FLATPAK_RUNTIME_GL_VERSION'))
 }
 
-def flatpak_runtime_packages(d, excluded=False):
-    """pkgdata of the packages installed in the image, by package name: the
-    ones the runtime ships, or with EXCLUDED those of
-    FLATPAK_RUNTIME_EXCLUDE_RECIPES."""
+def flatpak_runtime_packages(d):
+    """pkgdata of every package installed in the image, by package name."""
     import oe.packagedata
 
-    recipes = (d.getVar('FLATPAK_RUNTIME_EXCLUDE_RECIPES') or '').split()
     packages = {}
     with open(d.getVar('IMAGE_MANIFEST')) as f:
         for line in f:
             if line.strip():
                 pkg = line.split()[0]
-                data = oe.packagedata.read_pkgdatafile(
+                packages[pkg] = oe.packagedata.read_pkgdatafile(
                     os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', pkg))
-                if (data.get('PN') in recipes) == excluded:
-                    packages[pkg] = data
     return packages
-
-def flatpak_runtime_exclude(d, files):
-    """Remove the ${prefix} and ${sysconfdir} files of FLATPAK_RUNTIME_EXCLUDE_RECIPES from FILES."""
-    import json
-    import shutil
-
-    prefix = d.getVar('prefix')
-    sysconfdir = d.getVar('sysconfdir')
-    removed = set()
-    for pkg, data in sorted(flatpak_runtime_packages(d, excluded=True).items()):
-        info = next((v for k, v in data.items() if k.startswith('FILES_INFO')), '{}')
-        for path in sorted(json.loads(info)):
-            if path.startswith(prefix + '/'):
-                dest = os.path.join(files, path[len(prefix) + 1:])
-            elif path.startswith(sysconfdir + '/'):
-                dest = os.path.join(files, 'etc', path[len(sysconfdir) + 1:])
-            else:
-                continue
-            if os.path.lexists(dest) and not os.path.isdir(dest):
-                os.unlink(dest)
-                removed.add(os.path.dirname(dest))
-
-    # Packages ship empty directories next to their files (bin/ beside lib/);
-    # drop every directory the removal left holding no files, up to files/.
-    def has_files(top):
-        # os.walk lists a symlink to a directory among the directories.
-        return any(names or any(os.path.islink(os.path.join(root, x)) for x in dirs)
-                   for root, dirs, names in os.walk(top))
-    for parent in sorted(removed, key=len, reverse=True):
-        top = None
-        while parent != files and os.path.isdir(parent) and not has_files(parent):
-            top = parent
-            parent = os.path.dirname(parent)
-        if top:
-            shutil.rmtree(top)
 
 def flatpak_runtime_split_gl(d, files, gl_files):
     """Move the GL packages' ${libdir} files from FILES to GL_FILES/lib."""
@@ -232,8 +185,6 @@ python do_deploy_flatpak () {
     # Hardlinks: the commit only reads the tree, and the rootfs is large.
     for src, dest in ((usr, os.path.join(tree, 'files')), (etc, os.path.join(tree, 'files', 'etc'))):
         subprocess.run(['cp', '-al', src, dest], check=True)
-
-    flatpak_runtime_exclude(d, os.path.join(tree, 'files'))
 
     # flatpak builds a linker cache per app with the runtime's bin/ldconfig;
     # without one it falls back to LD_LIBRARY_PATH=/app/lib and ignores the
@@ -330,7 +281,7 @@ python do_deploy_flatpak () {
 }
 do_deploy_flatpak[cleandirs] = "${FLATPAK_DEPLOYDIR}"
 do_deploy_flatpak[vardeps] += "FLATPAK_RUNTIME_ID FLATPAK_RUNTIME_BRANCH FLATPAK_GPGID FLATPAK_RUNTIME_GL \
-    FLATPAK_RUNTIME_SDK FLATPAK_RUNTIME_PLATFORM FLATPAK_RUNTIME_EXCLUDE_RECIPES \
+    FLATPAK_RUNTIME_SDK FLATPAK_RUNTIME_PLATFORM \
     FLATPAK_RUNTIME_GL_NAME FLATPAK_RUNTIME_GL_RECIPES FLATPAK_RUNTIME_GL_EXCLUDE FLATPAK_RUNTIME_GL_VERSION"
 # The key's location is not content; the key ID is.
 do_deploy_flatpak[vardepsexclude] += "FLATPAK_GPGHOME"

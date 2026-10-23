@@ -3,11 +3,10 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# Flutter as extensions of the base runtime and SDK. The runtime carries the
-# one embedder, ivi-homescreen (flatpak-platform-*.bbappend); the extensions
-# carry one engine version, built in the configuration
-# that builds the runtime, so it matches the runtime's libraries and the
-# apps' snapshots.
+# The Flutter engine as extensions of the base runtime and SDK: the engine of
+# each runtime mode, and the SDK files, built in the configuration that
+# builds the runtime, so they match the runtime's libraries and the apps'
+# snapshots.
 
 require conf/include/flutter-version.inc
 require conf/include/gn-utils.inc

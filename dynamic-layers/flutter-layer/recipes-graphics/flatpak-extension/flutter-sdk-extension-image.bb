@@ -6,7 +6,8 @@
 SUMMARY = "Flutter flatpak SDK extension"
 DESCRIPTION = "org.flatpak_minimal.Sdk.Extension.flutter<engine version>: the Flutter \
                engine of FLUTTER_SDK_EXTENSION_MODES with its headers and SDK \
-               files, for building native code (FFI libraries, plugins, \
+               files, and ivi-homescreen's plugin headers and library, for \
+               building native code (FFI libraries, plugins, \
                embedders) in org.flatpak_minimal.Sdk with flatpak-builder. \
                Dart AOT is not in it: meta-flutter builds gen_snapshot only \
                for the build machine."
@@ -39,4 +40,5 @@ IMAGE_INSTALL = "\
     ${@' '.join(flatpak_flutter_engine_package(d, m) for m in d.getVar('FLUTTER_SDK_EXTENSION_MODES').split())} \
     flutter-engine-dev \
     flutter-engine-sdk-dev \
+    ivi-homescreen-shared-dev \
 "
