@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: MIT
 #
 SUMMARY = "Flutter flatpak SDK extension"
-DESCRIPTION = "org.flatpak_minimal.Sdk.Extension.flutter<version>: the Flutter \
+DESCRIPTION = "org.flatpak_minimal.Sdk.Extension.flutter<engine version>: the Flutter \
                engine of FLUTTER_SDK_EXTENSION_MODES with its headers and SDK \
                files, for building native code (FFI libraries, plugins, \
                embedders) in org.flatpak_minimal.Sdk with flatpak-builder. \
@@ -22,9 +22,10 @@ require flutter-extension.inc
 # meta-flutter must build each (PACKAGECONFIG:pn-flutter-engine).
 FLUTTER_SDK_EXTENSION_MODES ??= "release"
 
-# An SDK extension's branch is the SDK's, so the Flutter version goes in the
-# ID: org.flatpak_minimal.Sdk.Extension.flutter3_47_7.
-FLUTTER_SDK_EXTENSION_NAME = "flutter${@d.getVar('FLUTTER_EXTENSION_VERSION').replace('.', '_')}"
+# An SDK extension's branch is the SDK's, so the engine version goes in the
+# ID, and engines install side by side:
+# org.flatpak_minimal.Sdk.Extension.flutter3_47_7_deb287481e3c.
+FLUTTER_SDK_EXTENSION_NAME = "flutter${@d.getVar('FLATPAK_FLUTTER_ENGINE_VERSION').replace('.', '_').replace('-', '_')}"
 
 FLATPAK_EXTENSION_ID = "${FLATPAK_PLATFORM_SDK_ID}.Extension.${FLUTTER_SDK_EXTENSION_NAME}"
 FLATPAK_EXTENSION_BRANCH = "${FLATPAK_PLATFORM_BRANCH}"

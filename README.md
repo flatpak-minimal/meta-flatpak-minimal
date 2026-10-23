@@ -383,30 +383,35 @@ The layer's runtime is toolkit-neutral; Flutter's engine is an extension:
 | `flatpak-platform-runtime-image` | `runtime/org.flatpak_minimal.Platform/<arch>/<release>`: Wayland, Mesa, GLib, GStreamer, fonts, certificates, sqlite; with meta-flutter, ivi-homescreen |
 | `flatpak-platform-runtime` | that runtime, packaged |
 | `flatpak-platform-sdk-image` | `runtime/org.flatpak_minimal.Sdk/<arch>/<release>`: the runtime's packages plus their development files, GCC, cmake, ninja, pkg-config |
-| `flutter-engine-<mode>-extension-image` | `runtime/org.flatpak_minimal.Flutter.Engine.<mode>/<arch>/<flutter version>-<release>`: that mode's `libflutter_engine.so` and its ICU data (meta-flutter) |
+| `flutter-engine-<mode>-extension-image` | `runtime/org.flatpak_minimal.Flutter.Engine.<mode>/<arch>/<engine version>-<release>`: that mode's `libflutter_engine.so` and its ICU data (meta-flutter) |
 | `flutter-engine-<mode>-extension` | that extension, packaged |
-| `flutter-sdk-extension-image` | `runtime/org.flatpak_minimal.Sdk.Extension.flutter<version>/<arch>/<release>`: the engine of `FLUTTER_SDK_EXTENSION_MODES` (default `release`) plus its headers and SDK files (meta-flutter) |
+| `flutter-sdk-extension-image` | `runtime/org.flatpak_minimal.Sdk.Extension.flutter<engine version>/<arch>/<release>`: the engine of `FLUTTER_SDK_EXTENSION_MODES` (default `release`) plus its headers and SDK files (meta-flutter) |
 
 `<mode>` is the engine's runtime mode as meta-flutter names it: `debug`,
 `profile`, `release` or `jit_release` (recipes `flutter-engine-jit-release-*`,
 since package names cannot have `_`). meta-flutter builds the modes in
-`PACKAGECONFIG:pn-flutter-engine`, release by default.
+`PACKAGECONFIG:pn-flutter-engine`, release by default. `<engine version>` is
+the Flutter SDK version and the first 12 digits of the engine commit,
+`3.47.7-deb287481e3c`: the commit meta-flutter builds for `FLUTTER_SDK_TAG`
+(`conf/include/engine-revision.json`), which an upstream Flutter SDK of that
+version names in `bin/internal/engine.version`. A snapshot only runs on the
+engine it was compiled for, so the commit is in every engine ref.
 
 `<release>` is the oe-core release (`wrynose`), whose ABI the runtime
 carries; `FLATPAK_PLATFORM_BRANCH` overrides it. The runtime has the one
 embedder, ivi-homescreen, which loads `libflutter_engine.so` from the app's
 bundle. A Flutter app's metadata asks for the engine of its mode
-(`FLATPAK_FLUTTER_RUNTIME_MODE`) and Flutter version on its runtime branch,
+(`FLATPAK_FLUTTER_RUNTIME_MODE`) and engine version on its runtime branch,
 which flatpak installs with the app and mounts at `/app/flutter`, and the
-bundle's engine links point there. Every mode and version is its own ref, so
-they install side by side; apps share the runtime and its embedder, each
-mode and version in use adds one engine, and a Mesa fix is one runtime
-update for all of them.
+bundle's engine links point there. Every mode and engine version is its own
+ref, so they install side by side; apps share the runtime and its embedder,
+each mode and engine in use adds one extension, and a Mesa fix is one
+runtime update for all of them.
 
 The SDK names the runtime with `runtime=`, so native code built with
 flatpak-builder in the SDK runs in the runtime. The Flutter SDK extension
-carries the Flutter version in its ID, since an SDK extension's branch is the
-SDK's, and mounts at `/usr/lib/sdk/flutter<version>`, with an `enable.sh`
+carries the engine version in its ID, since an SDK extension's branch is the
+SDK's, and mounts at `/usr/lib/sdk/flutter<engine version>`, with an `enable.sh`
 that sets `PATH`, `CPATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH` and, for each
 mode it carries, `FLUTTER_ENGINE_<MODE>` (`FLUTTER_ENGINE_RELEASE`). There is no Dart AOT compiler: meta-flutter builds
 `gen_snapshot` for the build machine only, so an app's Dart code is still
@@ -419,8 +424,8 @@ qemu-user (binfmt):
 ```
 flatpak --user remote-add --no-gpg-verify vfpk-dev file:///path/to/tmp/deploy/flatpak/repo-dev
 flatpak --user install --arch=aarch64 vfpk-dev org.flatpak_minimal.Sdk//wrynose \
-    org.flatpak_minimal.Platform//wrynose org.flatpak_minimal.Sdk.Extension.flutter3_47_7//wrynose \
-    org.flatpak_minimal.Flutter.Engine.release//3.47.7-wrynose
+    org.flatpak_minimal.Platform//wrynose org.flatpak_minimal.Sdk.Extension.flutter3_47_7_deb287481e3c//wrynose \
+    org.flatpak_minimal.Flutter.Engine.release//3.47.7-deb287481e3c-wrynose
 flatpak-builder --arch=aarch64 --repo=repo build-dir org.example.App.yml
 ```
 
@@ -432,15 +437,15 @@ runtime: org.flatpak_minimal.Platform
 runtime-version: 'wrynose'
 sdk: org.flatpak_minimal.Sdk
 sdk-extensions:
-  - org.flatpak_minimal.Sdk.Extension.flutter3_47_7
+  - org.flatpak_minimal.Sdk.Extension.flutter3_47_7_deb287481e3c
 add-extensions:
   org.flatpak_minimal.Flutter.Engine.release:
     directory: flutter
-    version: '3.47.7-wrynose'
+    version: '3.47.7-deb287481e3c-wrynose'
 build-options:
   env:
-    CPATH: /usr/lib/sdk/flutter3_47_7/include
-    FLUTTER_ENGINE_RELEASE: /usr/lib/sdk/flutter3_47_7/share/flutter/3.47.7/release
+    CPATH: /usr/lib/sdk/flutter3_47_7_deb287481e3c/include
+    FLUTTER_ENGINE_RELEASE: /usr/lib/sdk/flutter3_47_7_deb287481e3c/share/flutter/3.47.7/release
 command: example
 modules:
   - name: example

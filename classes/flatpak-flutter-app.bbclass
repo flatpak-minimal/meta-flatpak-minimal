@@ -8,9 +8,9 @@
 # layer's base runtime (flatpak-platform-runtime-image) with its embedder,
 # ivi-homescreen. The engine comes from the extension of the app's runtime
 # mode, org.flatpak_minimal.Flutter.Engine.<mode> (flatpak-flutter-engine),
-# whose branch is the Flutter SDK version and the runtime's branch, so the
-# engine matches the app's snapshot; apps on different Flutter versions and
-# modes share the runtime.
+# whose branch is the engine version and the runtime's branch, so the engine
+# matches the app's snapshot; apps on different engines and modes share the
+# runtime.
 #
 #   inherit flutter-app-native flatpak-flutter-app
 #   FLATPAK_APP_ID = "org.example.App"
@@ -30,7 +30,7 @@ python () {
                  % (mode, d.getVar('FLUTTER_APP_RUNTIME_MODES')))
     engine = flatpak_flutter_engine_id(d, mode)
     d.appendVar('FLATPAK_APP_EXTENSIONS', ' ' + engine)
-    d.setVarFlag('FLATPAK_APP_EXTENSION_VERSION', engine, '%s-${FLATPAK_APP_RUNTIME_BRANCH}' % get_flutter_sdk_version(d))
+    d.setVarFlag('FLATPAK_APP_EXTENSION_VERSION', engine, '${FLATPAK_FLUTTER_ENGINE_VERSION}-${FLATPAK_APP_RUNTIME_BRANCH}')
     d.setVarFlag('FLATPAK_APP_EXTENSION_DIRECTORY', engine, '${FLATPAK_FLUTTER_ENGINE_DIR}')
     d.setVarFlag('FLATPAK_APP_EXTENSION_PACKAGE', engine, flatpak_flutter_engine_extension_package(d, mode))
     d.setVarFlag('FLATPAK_APP_EXTENSION_PATHS', engine, '${datadir}/flutter/%s' % get_flutter_sdk_version(d))
