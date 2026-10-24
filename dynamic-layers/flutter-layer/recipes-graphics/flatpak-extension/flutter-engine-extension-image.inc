@@ -24,3 +24,6 @@ FLATPAK_EXTENSION_BASE = "flatpak-platform-runtime-image"
 FLATPAK_EXTENSION_OF = "runtime/${FLATPAK_PLATFORM_ID}/${FLATPAK_ARCH}/${FLATPAK_PLATFORM_BRANCH}"
 
 IMAGE_INSTALL = "${@flatpak_flutter_engine_package(d, d.getVar('FLUTTER_ENGINE_EXTENSION_MODE'))}"
+
+# A .flatpak per engine, named for its mode and engine version.
+FLATPAK_DEPLOY_BUNDLES ?= "1"

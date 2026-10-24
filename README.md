@@ -318,6 +318,7 @@ image artifact:
 tmp/deploy/flatpak/
   refs/<package arch>/<pn>/repo    one repository per producing recipe
   refs/<package arch>/<pn>/licenses  (runtimes) licenses of their packages
+  refs/<package arch>/<pn>/*.flatpak  (FLATPAK_DEPLOY_BUNDLES) one bundle per ref
   refs/vfpk-<arch>-generic/<pn>/   the same, from a generic multiconfig
   repo/                            the repository devices update from
   repo-dev/                        the same plus SDKs, for developers
@@ -338,6 +339,16 @@ SDKs.
 `bitbake flatpak-repo-index-dev` does the same into `repo-dev/`, SDKs
 included. Publish it apart from the device repository, for developers to
 build apps against.
+
+`FLATPAK_DEPLOY_BUNDLES = "1"` on a producer also deploys each of its refs
+as a single-file bundle, `<id>-<branch>-<arch>.flatpak`, for
+`flatpak install --bundle` where the repository isn't reachable. The
+bundle names the remote it updates from, `FLATPAK_DEPLOY_BUNDLE_ORIGIN`
+(by default `FLATPAK_REMOTE_URL[<FLATPAK_BUILD_REMOTE>]`), and with
+`FLATPAK_GPGID` carries the public key, so flatpak verifies the commit. It
+is written with `flatpak-build-bundle-native`, the libostree half of
+`flatpak build-bundle`, and is the same commit the repository has. The
+Flutter engine extensions turn it on.
 
 A repository holds one commit per ref. Two builds of the same ref for
 different CPU tunes or machines (a Cortex-A57 and a Cortex-A76 build of one
@@ -412,6 +423,9 @@ asks for two extensions, which flatpak installs with the app:
 - the engine of the app's mode (`FLATPAK_FLUTTER_RUNTIME_MODE`) and engine
   version, at `/app/flutter`, where the bundle's engine links point. Every
   mode and engine version is its own ref, so they install side by side.
+  Each engine is also deployed as a bundle named for its mode and engine
+  version,
+  `org.flatpak_minimal.Flutter.Engine.release-3.47.7-deb287481e3c-wrynose-aarch64.flatpak`.
 
 Apps share the runtime and the embedder, each mode and engine in use adds
 one extension, and a Mesa fix is one runtime update for all of them.
