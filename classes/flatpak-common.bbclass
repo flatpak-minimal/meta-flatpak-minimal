@@ -66,29 +66,56 @@ FLATPAK_PLATFORM_PACKAGE = "flatpak-platform-runtime"
 # shared build disk refuses writes with plenty of room left.
 FLATPAK_REPO_MIN_FREE ??= "1GB"
 
-def flatpak_license_names(expression):
-    """The license units in a LICENSE expression, without its operators.
+# Licenses paired with an exception, as LEGACY:LICENSE:EXCEPTION. oe-core
+# up to wrynose names each pair as one license, LEGACY; later releases write
+# 'LICENSE WITH EXCEPTION', which wrynose cannot parse, and deprecate LEGACY.
+# A recipe declares a pair with ${@flatpak_license_name(d, 'LEGACY')}, and
+# flatpak_license_names reports either spelling as LEGACY.
+FLATPAK_LICENSE_PAIRS ??= "\
+    GPL-2.0-with-GCC-exception:GPL-2.0-or-later:GCC-exception-2.0 \
+    GPL-3.0-with-GCC-exception:GPL-3.0-or-later:GCC-exception-3.1 \
+    Apache-2.0-with-LLVM-exception:Apache-2.0:LLVM-exception \
+"
 
-    LICENSE arrives here from two directions: recipes in this layer, which
-    spell conjunctions '&', and pkgdata for every package installed in an
-    image, which carries whatever the recipe that built it wrote. oe-core
-    accepts both and normalizes one into the other --
-    _substitute_legacy_license() rewrites '&' to AND and '|' to OR before
-    parsing as SPDX -- so an expression reaches this function with AND, OR
-    or WITH in it, and all three match the name pattern below.
+def flatpak_license_name(d, legacy):
+    """LEGACY from FLATPAK_LICENSE_PAIRS as this oe-core spells it in LICENSE:
+    as is up to wrynose, 'LICENSE WITH EXCEPTION' where oe-core parses SPDX
+    expressions (oe.spdx_license)."""
+    import importlib.util
+    if importlib.util.find_spec('oe.spdx_license') is None:
+        return legacy
+    for entry in (d.getVar('FLATPAK_LICENSE_PAIRS') or '').split():
+        name, lic, exception = entry.split(':')
+        if name == legacy:
+            return '%s WITH %s' % (lic, exception)
+    bb.fatal("%s is not in FLATPAK_LICENSE_PAIRS" % legacy)
 
-    AND and OR are dropped. WITH is not: it binds a license to an
-    exception, and an exception is not a license. SPDX only admits
-    GCC-exception-3.1 after WITH, so a list that names it on its own
-    cannot be declared by any recipe --
+def flatpak_license_names(d, expression):
+    """The license units in a LICENSE expression, without its operators,
+    spelled the way every supported oe-core release can declare them.
 
-      ERROR: LICENSE value has an invalid format: Unexpected 'AND'
+    LICENSE arrives here from recipes in this layer and from pkgdata for
+    every package installed in an image, which carries whatever the recipe
+    that built it wrote. Releases spell the same license differently:
 
-    -- which is what splitting 'GPL-3.0-or-later WITH GCC-exception-3.1'
-    into two names produced. Pairs stay whole, and a package licensed both
-    plainly and with an exception contributes both units.
+      wrynose                       later (SPDX expressions)
+      PD                            LicenseRef-PD
+      GPL-3.0-with-GCC-exception    GPL-3.0-or-later WITH GCC-exception-3.1
+
+    Units are compared in the left column, which wrynose parses: the
+    LicenseRef- prefix goes, and a pair in FLATPAK_LICENSE_PAIRS becomes
+    its legacy name, so a deployed list and a LICENSE from either release
+    agree. A pair not listed stays 'LICENSE WITH EXCEPTION';
+    an exception is not a license on its own, so it is never split off.
+
+    AND and OR are dropped, along with '&', '|' and parentheses.
     """
     import re
+    pairs = {}
+    for entry in (d.getVar('FLATPAK_LICENSE_PAIRS') or '').split():
+        legacy, lic, exception = entry.split(':')
+        pairs['%s WITH %s' % (lic, exception)] = legacy
+
     units = []
     exception_next = False
     for token in re.findall(r'[A-Za-z0-9.+_-]+', expression or ''):
@@ -100,8 +127,8 @@ def flatpak_license_names(expression):
             units[-1] = '%s WITH %s' % (units[-1], token)
             exception_next = False
         else:
-            units.append(token)
-    return set(units)
+            units.append(token[len('LicenseRef-'):] if token.startswith('LicenseRef-') else token)
+    return set(pairs.get(unit, unit) for unit in units)
 
 
 # Where the installation built in the guest ends up:

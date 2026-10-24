@@ -184,7 +184,7 @@ python do_deploy_flatpak () {
         value = next((v for k, v in data.items() if k.startswith('LICENSE:')), data.get('LICENSE'))
         if not value:
             bb.fatal("no license recorded for %s, installed in the extension" % pkg)
-        names |= flatpak_license_names(value)
+        names |= flatpak_license_names(d, value)
     with open(os.path.join(d.getVar('FLATPAK_DEPLOYDIR'), 'licenses'), 'w') as f:
         f.write(''.join(name + '\n' for name in sorted(names)))
 }

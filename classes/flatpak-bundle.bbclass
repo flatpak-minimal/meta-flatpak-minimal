@@ -41,8 +41,11 @@
 #   The image's deployed repository is copied whole. FLATPAK_REMOTE defaults
 #   to FLATPAK_BUILD_REMOTE. LICENSE must name every license of the packages
 #   in the runtime: do_compile checks it against the list the image deploys
-#   and says what is missing. LIC_FILES_CHKSUM defaults to the common license
-#   texts of those licenses.
+#   and says what is missing. Both use the names wrynose parses (PD, not
+#   LicenseRef-PD); declare a license paired with an exception with
+#   ${@flatpak_license_name(d, 'GPL-3.0-with-GCC-exception')}, which later
+#   releases get as 'GPL-3.0-or-later WITH GCC-exception-3.1'.
+#   LIC_FILES_CHKSUM defaults to the common license texts of those licenses.
 #
 #   The image is built for MACHINE, with its CPU tune, so the runtime only
 #   runs on devices that tune covers. FLATPAK_IMAGE_GENERIC = "1" builds it
@@ -134,7 +137,7 @@ python () {
             # name; take the text of each half.
             files = []
             names = set()
-            for unit in flatpak_license_names(d.getVar('LICENSE')):
+            for unit in flatpak_license_names(d, d.getVar('LICENSE')):
                 names.update(unit.split(' WITH '))
             for name in sorted(names):
                 path = os.path.join(d.getVar('COMMON_LICENSE_DIR'), name)
@@ -192,7 +195,7 @@ python flatpak_bundle_check_licenses () {
     # on whitespace takes it apart again.
     with open(path) as f:
         runtime = set(line.strip() for line in f if line.strip())
-    declared = flatpak_license_names(d.getVar('LICENSE'))
+    declared = flatpak_license_names(d, d.getVar('LICENSE'))
     missing = sorted(runtime - declared)
     if missing:
         bb.fatal("LICENSE does not name every license in %s; missing: %s. The runtime's licenses are:\n"
