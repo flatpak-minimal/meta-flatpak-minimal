@@ -41,10 +41,9 @@
 #   The image's deployed repository is copied whole. FLATPAK_REMOTE defaults
 #   to FLATPAK_BUILD_REMOTE. LICENSE must name every license of the packages
 #   in the runtime: do_compile checks it against the list the image deploys
-#   and says what is missing. Both use the names wrynose parses (PD, not
-#   LicenseRef-PD); declare a license paired with an exception with
-#   ${@flatpak_license_name(d, 'GPL-3.0-with-GCC-exception')}, which later
-#   releases get as 'GPL-3.0-or-later WITH GCC-exception-3.1'.
+#   and says what is missing. Declare it with flatpak_license (flatpak-common),
+#   which takes the names as wrynose spells them (PD, not LicenseRef-PD;
+#   GPL-3.0-with-GCC-exception) and writes the syntax each release parses.
 #   LIC_FILES_CHKSUM defaults to the common license texts of those licenses.
 #
 #   The image is built for MACHINE, with its CPU tune, so the runtime only
