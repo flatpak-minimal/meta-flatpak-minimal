@@ -69,7 +69,7 @@ FLATPAK_REPO_MIN_FREE ??= "1GB"
 # Licenses paired with an exception, as LEGACY:LICENSE:EXCEPTION. oe-core
 # up to wrynose names each pair as one license, LEGACY; later releases write
 # 'LICENSE WITH EXCEPTION', which wrynose cannot parse, and deprecate LEGACY.
-# A recipe declares a pair with ${@flatpak_license_name(d, 'LEGACY')}, and
+# flatpak_license writes a pair the way the running oe-core wants it, and
 # flatpak_license_names reports either spelling as LEGACY.
 FLATPAK_LICENSE_PAIRS ??= "\
     GPL-2.0-with-GCC-exception:GPL-2.0-or-later:GCC-exception-2.0 \
@@ -77,18 +77,28 @@ FLATPAK_LICENSE_PAIRS ??= "\
     Apache-2.0-with-LLVM-exception:Apache-2.0:LLVM-exception \
 "
 
-def flatpak_license_name(d, legacy):
-    """LEGACY from FLATPAK_LICENSE_PAIRS as this oe-core spells it in LICENSE:
-    as is up to wrynose, 'LICENSE WITH EXCEPTION' where oe-core parses SPDX
-    expressions (oe.spdx_license)."""
+def flatpak_license(d, names):
+    """A LICENSE value naming every license in NAMES, space-separated and
+    spelled as wrynose spells them (PD, GPL-3.0-with-GCC-exception), in the
+    syntax this oe-core parses without a warning:
+
+      LICENSE = "${@flatpak_license(d, 'MIT PD GPL-3.0-with-GCC-exception')}"
+
+    gives 'MIT & PD & GPL-3.0-with-GCC-exception' up to wrynose and, where
+    oe-core parses SPDX expressions (oe.spdx_license),
+    'MIT AND LicenseRef-PD AND GPL-3.0-or-later WITH GCC-exception-3.1':
+    pairs from FLATPAK_LICENSE_PAIRS, then oe-core's own conversion.
+    """
     import importlib.util
+    names = (names or '').split()
     if importlib.util.find_spec('oe.spdx_license') is None:
-        return legacy
+        return ' & '.join(names)
+    import oe.license
+    pairs = {}
     for entry in (d.getVar('FLATPAK_LICENSE_PAIRS') or '').split():
-        name, lic, exception = entry.split(':')
-        if name == legacy:
-            return '%s WITH %s' % (lic, exception)
-    bb.fatal("%s is not in FLATPAK_LICENSE_PAIRS" % legacy)
+        legacy, lic, exception = entry.split(':')
+        pairs[legacy] = '%s WITH %s' % (lic, exception)
+    return oe.license.convert_legacy_license_to_spdx(d, ' & '.join(pairs.get(n, n) for n in names))
 
 def flatpak_license_names(d, expression):
     """The license units in a LICENSE expression, without its operators,

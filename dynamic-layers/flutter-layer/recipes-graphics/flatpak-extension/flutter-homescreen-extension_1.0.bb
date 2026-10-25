@@ -9,7 +9,7 @@ DESCRIPTION = "The org.flatpak_minimal.Flutter.Homescreen extension from \
                flatpak-cross-install installs at build time."
 HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
-LICENSE = "Apache-2.0 & ${@flatpak_license_name(d, 'Apache-2.0-with-LLVM-exception')}"
+LICENSE = "${@flatpak_license(d, 'Apache-2.0 Apache-2.0-with-LLVM-exception')}"
 
 inherit flatpak-bundle
 
