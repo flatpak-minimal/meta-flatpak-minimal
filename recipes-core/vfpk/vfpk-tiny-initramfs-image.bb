@@ -21,7 +21,7 @@ IMAGE_FSTYPES = "cpio.gz"
 PACKAGE_EXCLUDE = "kernel-image-*"
 IMAGE_NAME_SUFFIX = ""
 
-ROOTFS_POSTPROCESS_COMMAND += "vfpk_initramfs_dirs;"
+ROOTFS_POSTPROCESS_COMMAND += "vfpk_initramfs_dirs"
 
 vfpk_initramfs_dirs() {
     install -d ${IMAGE_ROOTFS}/proc ${IMAGE_ROOTFS}/sys ${IMAGE_ROOTFS}/dev ${IMAGE_ROOTFS}/mnt
