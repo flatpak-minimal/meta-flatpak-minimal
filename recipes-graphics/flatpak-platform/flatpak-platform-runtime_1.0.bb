@@ -17,9 +17,10 @@ FLATPAK_PLATFORM_LICENSES = "Apache-2.0 BSD-1-Clause BSD-2-Clause BSD-3-Clause \
     Zlib blessing bzip2-1.0.6"
 
 # x86-64 mesa builds the LLVM-backed gallium drivers, so mesa-megadriver
-# pulls libllvm into the runtime and the runtime carries its exception. No
-# other arch does, and naming it unconditionally warns there instead.
-FLATPAK_PLATFORM_LICENSES:append:x86-64 = " Apache-2.0-with-LLVM-exception"
+# pulls libllvm into the runtime, and with it libelf (GPL-2.0-or-later |
+# LGPL-3.0-or-later; the check wants both sides of an OR). No other arch
+# does, and naming them unconditionally warns there instead.
+FLATPAK_PLATFORM_LICENSES:append:x86-64 = " Apache-2.0-with-LLVM-exception LGPL-3.0-or-later"
 
 LICENSE = "${@flatpak_license(d, d.getVar('FLATPAK_PLATFORM_LICENSES'))}"
 

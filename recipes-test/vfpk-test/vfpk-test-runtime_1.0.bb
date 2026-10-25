@@ -10,11 +10,11 @@ DESCRIPTION = "The org.flatpak_minimal.Test.Platform runtime from \
 HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
 # The licenses of the packages in the runtime; do_compile checks the list.
-LICENSE = "${@flatpak_license(d, 'BSD-2-Clause BSD-3-Clause bzip2-1.0.6 GPL-2.0-only GPL-2.0-or-later LGPL-2.1-or-later MIT')}"
-
+VFPK_TEST_RUNTIME_LICENSES = "GPL-2.0-only GPL-2.0-or-later LGPL-2.1-or-later bzip2-1.0.6"
 # meta-selinux links busybox to libselinux when the target enables SELinux.
 # The runtime is built in the target configuration, not the vfpk guest.
-LICENSE:append = "${@bb.utils.contains('DISTRO_FEATURES', 'selinux', ' & PD', '', d)}"
+VFPK_TEST_RUNTIME_LICENSES:append = "${@bb.utils.contains('DISTRO_FEATURES', 'selinux', ' PD', '', d)}"
+LICENSE = "${@flatpak_license(d, d.getVar('VFPK_TEST_RUNTIME_LICENSES'))}"
 
 inherit flatpak-bundle
 
