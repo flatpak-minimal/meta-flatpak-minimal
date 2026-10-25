@@ -163,7 +163,7 @@ def flatpak_runtime_licenses(d):
         value = next((v for k, v in data.items() if k.startswith('LICENSE:')), data.get('LICENSE'))
         if not value:
             bb.fatal("no license recorded for %s, installed in the runtime" % pkg)
-        names |= flatpak_license_names(value)
+        names |= flatpak_license_names(d, value)
     return sorted(names)
 
 python do_deploy_flatpak () {
