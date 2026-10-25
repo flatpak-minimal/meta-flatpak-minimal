@@ -16,12 +16,14 @@ inherit image
 # IMAGE_INSTALL in local.conf must not land in the guest.
 PACKAGE_INSTALL = "busybox vfpk-preinit"
 IMAGE_FEATURES = ""
+# The guest boots under vfpk-runner, not as a MACHINE image: no BSP classes.
+IMAGE_CLASSES = ""
 IMAGE_LINGUAS = ""
 IMAGE_FSTYPES = "cpio.gz"
 PACKAGE_EXCLUDE = "kernel-image-*"
 IMAGE_NAME_SUFFIX = ""
 
-ROOTFS_POSTPROCESS_COMMAND += "vfpk_initramfs_dirs;"
+ROOTFS_POSTPROCESS_COMMAND += "vfpk_initramfs_dirs"
 
 vfpk_initramfs_dirs() {
     install -d ${IMAGE_ROOTFS}/proc ${IMAGE_ROOTFS}/sys ${IMAGE_ROOTFS}/dev ${IMAGE_ROOTFS}/mnt

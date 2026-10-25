@@ -25,11 +25,13 @@ PACKAGE_INSTALL = " \
     vfpk-init \
 "
 IMAGE_FEATURES = ""
+# The guest boots under vfpk-runner, not as a MACHINE image: no BSP classes.
+IMAGE_CLASSES = ""
 IMAGE_LINGUAS = ""
 IMAGE_FSTYPES = "squashfs-zst"
 IMAGE_NAME_SUFFIX = ""
 
-ROOTFS_POSTPROCESS_COMMAND += "vfpk_rootfs_tweaks;"
+ROOTFS_POSTPROCESS_COMMAND += "vfpk_rootfs_tweaks"
 
 vfpk_rootfs_tweaks() {
     install -d ${IMAGE_ROOTFS}/proc ${IMAGE_ROOTFS}/sys ${IMAGE_ROOTFS}/dev \

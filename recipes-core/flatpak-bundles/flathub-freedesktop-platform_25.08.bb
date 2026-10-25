@@ -14,7 +14,8 @@ HOMEPAGE = "https://freedesktop-sdk.io"
 # as Flathub builds it. This build cannot list or check them; the license
 # text says where they are recorded. Shipping it means accepting that, so it
 # is restricted: set LICENSE_FLAGS_ACCEPTED += "flathub" to build it.
-LICENSE = "Freedesktop-SDK-runtime"
+# LicenseRef-Freedesktop-SDK-runtime where oe-core parses SPDX expressions.
+LICENSE = "${@flatpak_license(d, 'Freedesktop-SDK-runtime')}"
 NO_GENERIC_LICENSE[Freedesktop-SDK-runtime] = "freedesktop-sdk-runtime.license"
 LIC_FILES_CHKSUM = "file://freedesktop-sdk-runtime.license;md5=d92a1cb313768e69c3aa84b8d32beab0"
 LICENSE_FLAGS = "flathub"
