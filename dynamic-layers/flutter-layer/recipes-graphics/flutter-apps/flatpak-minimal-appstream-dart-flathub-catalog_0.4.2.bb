@@ -78,8 +78,11 @@ do_inject_user_defines[dirs] = "${S}"
 RDEPENDS:${PN} += "libsqlite3"
 
 do_install:append() {
-    ln -sf ${libdir}/libsqlite3.so.0 \
-        ${D}${FLUTTER_INSTALL_DIR}/${FLUTTER_SDK_VERSION}/${FLUTTER_RUNTIME_MODE}/lib/libsqlite3.so
+    # Every mode installed, not just the last one meta-flutter's loop left in
+    # FLUTTER_RUNTIME_MODE.
+    for lib in ${D}${FLUTTER_INSTALL_DIR}/${FLUTTER_SDK_VERSION}/*/lib; do
+        ln -sf ${libdir}/libsqlite3.so.0 $lib/libsqlite3.so
+    done
 }
 
 # pub-cache.bbclass orders do_seed_pub_cache only after do_unpack, but the task
