@@ -23,7 +23,9 @@ FLATPAK_EXTENSION_BRANCH = "${FLATPAK_FLUTTER_ENGINE_BRANCH}"
 FLATPAK_EXTENSION_BASE = "flatpak-platform-runtime-image"
 FLATPAK_EXTENSION_OF = "runtime/${FLATPAK_PLATFORM_ID}/${FLATPAK_ARCH}/${FLATPAK_PLATFORM_BRANCH}"
 
-IMAGE_INSTALL = "${@flatpak_flutter_engine_package(d, d.getVar('FLUTTER_ENGINE_EXTENSION_MODE'))}"
+# RPM scriptlets require /bin/sh. Select the base runtime's BusyBox
+# explicitly so the solver does not add Bash and base-files to the extension.
+FLATPAK_EXTENSION_PACKAGES = "busybox ${@flatpak_flutter_engine_package(d, d.getVar('FLUTTER_ENGINE_EXTENSION_MODE'))}"
 
 # A .flatpak per engine, named for its mode and engine version.
 FLATPAK_DEPLOY_BUNDLES ?= "1"

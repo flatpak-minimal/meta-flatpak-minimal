@@ -23,7 +23,9 @@ FLATPAK_EXTENSION_BRANCH = "${FLATPAK_FLUTTER_HOMESCREEN_BRANCH}"
 FLATPAK_EXTENSION_BASE = "flatpak-platform-runtime-image"
 FLATPAK_EXTENSION_OF = "runtime/${FLATPAK_PLATFORM_ID}/${FLATPAK_ARCH}/${FLATPAK_PLATFORM_BRANCH}"
 
-IMAGE_INSTALL = "ivi-homescreen"
+# RPM scriptlets require /bin/sh. Select the base runtime's BusyBox
+# explicitly so the solver does not add Bash and base-files to the extension.
+FLATPAK_EXTENSION_PACKAGES = "busybox ivi-homescreen"
 # meta-flutter's ivi-homescreen RDEPENDS on flutter-engine, every built
 # mode; the app's engine comes from its Engine.<mode> extension.
 FLATPAK_EXTENSION_EXCLUDE_RECIPES = "flutter-engine"
