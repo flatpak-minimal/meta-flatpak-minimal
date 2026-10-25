@@ -16,6 +16,8 @@ inherit image
 # IMAGE_INSTALL in local.conf must not land in the guest.
 PACKAGE_INSTALL = "busybox vfpk-preinit"
 IMAGE_FEATURES = ""
+# The guest boots under vfpk-runner, not as a MACHINE image: no BSP classes.
+IMAGE_CLASSES = ""
 IMAGE_LINGUAS = ""
 IMAGE_FSTYPES = "cpio.gz"
 PACKAGE_EXCLUDE = "kernel-image-*"

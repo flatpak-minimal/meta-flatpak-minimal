@@ -56,6 +56,11 @@
 
 inherit image flatpak-repo flatpak-deploy
 
+# Not a bootable image of MACHINE: no BSP or test image classes. A BSP's
+# rootfs postprocessing would otherwise write into the sandbox's /etc
+# (meta-raspberrypi's sdcard_image-rpi appends to etc/sysctl.conf).
+IMAGE_CLASSES = ""
+
 FLATPAK_RUNTIME_ID ??= ""
 FLATPAK_RUNTIME_BRANCH ??= ""
 FLATPAK_RUNTIME_SDK ??= ""
