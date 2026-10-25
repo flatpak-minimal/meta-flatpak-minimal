@@ -22,7 +22,7 @@ FLATPAK_RUNTIME_PLATFORM = "${FLATPAK_PLATFORM_ID}"
 
 IMAGE_FEATURES:append = " dev-pkgs"
 
-IMAGE_INSTALL = "\
+FLATPAK_RUNTIME_PACKAGES = "\
     ${FLATPAK_PLATFORM_PACKAGES} \
     packagegroup-core-sdk \
     bash \

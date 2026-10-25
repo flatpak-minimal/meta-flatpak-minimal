@@ -36,7 +36,10 @@ FLATPAK_EXTENSION_MOUNT = "${libdir}/sdk/${FLUTTER_SDK_EXTENSION_NAME}"
 # FLUTTER_ENGINE_RELEASE and so on: each mode's engine directory.
 FLATPAK_EXTENSION_ENABLE_VARS = "${@' '.join('FLUTTER_ENGINE_%s=share/flutter/%s/%s' % (flatpak_flutter_engine_mode(d, m).upper(), d.getVar('FLUTTER_EXTENSION_VERSION'), flatpak_flutter_engine_dir(d, m)) for m in d.getVar('FLUTTER_SDK_EXTENSION_MODES').split())}"
 
-IMAGE_INSTALL = "\
+# RPM scriptlets require /bin/sh. Select the base runtime's BusyBox
+# explicitly so the solver does not add Bash and base-files to the extension.
+FLATPAK_EXTENSION_PACKAGES = "\
+    busybox \
     ${@' '.join(flatpak_flutter_engine_package(d, m) for m in d.getVar('FLUTTER_SDK_EXTENSION_MODES').split())} \
     flutter-engine-dev \
     flutter-engine-sdk-dev \

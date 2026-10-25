@@ -298,6 +298,17 @@ Both kinds of package install through `flatpak-cross-install` like any other
 bundle: `IMAGE_INSTALL += "<app>-flatpak"` or `BUNDLED_FLATPAKS`. The app
 package depends on its runtime's package.
 
+Runtime and SDK images select their packages with `FLATPAK_RUNTIME_PACKAGES`;
+extension images use `FLATPAK_EXTENSION_PACKAGES`. These feed `PACKAGE_INSTALL`
+without using `IMAGE_INSTALL`, so global product additions such as kernel
+modules and AGL development tools stay out of sandbox images. Migrate any
+runtime or extension recipes and bbappends that set `IMAGE_INSTALL` to the
+appropriate variable. Normal package dependencies and requested image features still apply,
+including `dev-pkgs` in an SDK. Boot image bootstrap packages such as
+`run-postinsts` are not selected: sandbox images have no first boot to run
+deferred post-installation scripts.
+Bootable images continue to use `IMAGE_INSTALL` as usual.
+
 A runtime built here carries the licenses of its packages: the image lists
 them next to the repository, and the packaging recipe's `LICENSE` must name
 every one of them, or `do_compile` fails and prints the current list. Each

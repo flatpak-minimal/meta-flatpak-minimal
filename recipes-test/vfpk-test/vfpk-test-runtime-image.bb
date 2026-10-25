@@ -16,4 +16,4 @@ inherit flatpak-runtime-image
 FLATPAK_RUNTIME_ID = "org.flatpak_minimal.Test.Platform"
 FLATPAK_RUNTIME_BRANCH = "1"
 
-IMAGE_INSTALL = "busybox ldconfig"
+FLATPAK_RUNTIME_PACKAGES = "busybox ldconfig"

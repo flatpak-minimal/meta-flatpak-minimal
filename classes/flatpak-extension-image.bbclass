@@ -11,10 +11,10 @@
 #   FLATPAK_EXTENSION_BRANCH = "1.0"
 #   FLATPAK_EXTENSION_BASE = "example-platform-runtime-image"
 #   FLATPAK_EXTENSION_OF = "runtime/org.example.Platform/${FLATPAK_ARCH}/1"
-#   IMAGE_INSTALL = "foo"
+#   FLATPAK_EXTENSION_PACKAGES = "foo"
 #
-# The image installs IMAGE_INSTALL with its dependencies. Packages the base
-# runtime image has stay out; the files of every other package go into the
+# The image installs FLATPAK_EXTENSION_PACKAGES with its dependencies.
+# Packages the base runtime image has stay out; every other package goes into the
 # extension, ${prefix}/X as X and ${sysconfdir}/X as etc/X, and are
 # committed as runtime/ID/ARCH/BRANCH. Both images come from the same build,
 # so the extension's binaries match the runtime's libraries.
@@ -26,8 +26,8 @@
 # with FLATPAK_APP_EXTENSION_PATHS.
 #
 # FLATPAK_EXTENSION_EXCLUDE_RECIPES leaves the packages of the listed recipes
-# out too, though IMAGE_INSTALL depends on them: another extension carries
-# them.
+# out too, though FLATPAK_EXTENSION_PACKAGES depends on them: another
+# extension carries them.
 #
 # FLATPAK_EXTENSION_MOUNT, the directory the extension is mounted at, adds an
 # enable.sh that puts its bin, include, lib and pkgconfig directories on the
@@ -41,6 +41,14 @@ inherit image flatpak-repo flatpak-deploy
 # rootfs postprocessing would otherwise write into the sandbox's /etc
 # (meta-raspberrypi's sdcard_image-rpi appends to etc/sysctl.conf).
 IMAGE_CLASSES = ""
+
+# Product configuration can append boot and development packages to
+# IMAGE_INSTALL globally. Keep the sandbox's explicit package set separate,
+# while preserving requested features (SDK dev-pkgs). A sandbox has no
+# first boot on which to run deferred postinsts; do not install run-postinsts
+# or its shell and base-files dependencies through the image bootstrap.
+FLATPAK_EXTENSION_PACKAGES ??= ""
+PACKAGE_INSTALL = "${FLATPAK_EXTENSION_PACKAGES} ${FEATURE_INSTALL}"
 
 FLATPAK_EXTENSION_ID ??= ""
 FLATPAK_EXTENSION_BRANCH ??= ""
@@ -59,7 +67,7 @@ IMAGE_LINGUAS = ""
 KERNELDEPMODDEPEND = ""
 KERNEL_DEPLOY_DEPEND = ""
 EXTRA_IMAGEDEPENDS = ""
-# An extension adds what IMAGE_INSTALL needs to the base and nothing else.
+# Add what FLATPAK_EXTENSION_PACKAGES needs to the base and nothing else.
 # Recommendations pull in packages the base left out on purpose (an SDK's
 # -dev packages come without their dependencies), so list wanted ones.
 NO_RECOMMENDATIONS = "1"

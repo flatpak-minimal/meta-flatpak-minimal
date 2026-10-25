@@ -8,7 +8,7 @@
 #   inherit flatpak-runtime-image
 #   FLATPAK_RUNTIME_ID = "org.example.Platform"
 #   FLATPAK_RUNTIME_BRANCH = "1.0"
-#   IMAGE_INSTALL = "..."
+#   FLATPAK_RUNTIME_PACKAGES = "..."
 #
 # The image's /usr becomes the runtime's files/ (mounted at /usr in the
 # sandbox) and its /etc becomes files/etc, which flatpak exposes as /etc.
@@ -60,6 +60,14 @@ inherit image flatpak-repo flatpak-deploy
 # rootfs postprocessing would otherwise write into the sandbox's /etc
 # (meta-raspberrypi's sdcard_image-rpi appends to etc/sysctl.conf).
 IMAGE_CLASSES = ""
+
+# Product configuration can append boot and development packages to
+# IMAGE_INSTALL globally. Keep the sandbox's explicit package set separate,
+# while preserving requested features (SDK dev-pkgs). A sandbox has no
+# first boot on which to run deferred postinsts; do not install run-postinsts
+# or its shell and base-files dependencies through the image bootstrap.
+FLATPAK_RUNTIME_PACKAGES ??= ""
+PACKAGE_INSTALL = "${FLATPAK_RUNTIME_PACKAGES} ${FEATURE_INSTALL}"
 
 FLATPAK_RUNTIME_ID ??= ""
 FLATPAK_RUNTIME_BRANCH ??= ""
@@ -198,7 +206,7 @@ python do_deploy_flatpak () {
     ldconfig = os.path.join(files, 'bin', 'ldconfig')
     if not os.path.lexists(ldconfig):
         if not os.path.isfile(os.path.join(files, 'sbin', 'ldconfig')):
-            bb.fatal("the runtime has no ldconfig; add ldconfig to IMAGE_INSTALL")
+            bb.fatal("the runtime has no ldconfig; add ldconfig to FLATPAK_RUNTIME_PACKAGES")
         # Relative: flatpak resolves it beneath the runtime.
         os.symlink('../sbin/ldconfig', ldconfig)
 
