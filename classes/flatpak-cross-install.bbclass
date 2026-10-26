@@ -3,8 +3,8 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# Install flatpak content into an image's system installation
-# (/var/lib/flatpak) at build time.
+# Install flatpak content at build time. System scope uses /var/lib/flatpak;
+# user scope seeds the installation into FLATPAK_INSTALL_USER's home on boot.
 #
 # The content comes from flatpak-bundle packages: everything they install
 # under ${FLATPAK_BUNDLES_DIR} is collected after the rootfs is assembled,
@@ -16,7 +16,7 @@
 #
 # Each entry is PN[:option...]:
 #   autostart  generate and enable flatpak-app-<ID>.service for every app in
-#              the package. The unit runs 'flatpak run --system <ID>' as
+#              the package. The unit runs 'flatpak run --<scope> <ID>' as
 #              FLATPAK_APP_USER (varflag [PN] overrides it per package), with
 #              the KEY=VALUE pairs of FLATPAK_APP_ENV as its environment, or
 #              FLATPAK_SERVICE_FILE[PN] (an absolute path) replaces the unit.
@@ -71,6 +71,7 @@ FLATPAK_APP_USER ??= ""
 FLATPAK_APP_ENV ??= ""
 
 FLATPAK_INSTALLED_REFS = "${datadir}/vfpk/installed.refs"
+FLATPAK_INSTALLED_SCOPE = "${datadir}/vfpk/installed.scope"
 
 FLATPAK_DATA_IMAGE = "${IMGDEPLOYDIR}/${IMAGE_NAME}.vfpk-data.ext4"
 FLATPAK_DATA_LABEL ??= "flatpak"
@@ -147,7 +148,7 @@ python () {
 ROOTFS_POSTPROCESS_COMMAND += "flatpak_cross_install"
 ROOTFS_POSTPROCESS_COMMAND:append = " flatpak_autostart_units"
 
-do_rootfs[vardeps] += "BUNDLED_FLATPAKS FLATPAK_DEPLOY_MODE FLATPAK_APP_USER FLATPAK_APP_ENV \
+do_rootfs[vardeps] += "BUNDLED_FLATPAKS FLATPAK_DEPLOY_MODE FLATPAK_INSTALL_SCOPE FLATPAK_INSTALL_USER FLATPAK_APP_USER FLATPAK_APP_ENV \
     FLATPAK_SERVICE_FILE FLATPAK_INSTALL_TIMEOUT FLATPAK_INSTALL_MEMORY FLATPAK_DATA_LABEL \
     FLATPAK_DATA_EXTRA_SPACE FLATPAK_DATA_SIZE FLATPAK_DATA_UUID FLATPAK_DATA_FSTAB FLATPAK_SEED"
 # Tuning only; the result does not depend on it.
@@ -226,9 +227,12 @@ def flatpak_guest_script(d, remotes, bundles):
 
     lines = [
         'set -eu',
+        'scope=%s' % quote(d.getVar('FLATPAK_INSTALL_SCOPE')),
+        # The runner archives /var/lib/flatpak regardless of installation scope.
+        'if [ "$scope" = user ]; then export FLATPAK_USER_DIR=/var/lib/flatpak; fi',
         'repo=/var/lib/flatpak/repo',
         'in=$VFPK_INPUT',
-        'flatpak_install() { flatpak install --system -y --noninteractive "$@"; }',
+        'flatpak_install() { flatpak install --"$scope" -y --noninteractive "$@"; }',
         'remote_config() { ostree --repo="$repo" config "$1" "remote \\"$2\\".$3" ${4:+"$4"}; }',
         # Filters are referenced by absolute path from the .flatpakrepo files.
         'if [ -d "$in/filters" ]; then mkdir -p /etc/flatpak/filters && cp "$in"/filters/* /etc/flatpak/filters/; fi',
@@ -238,7 +242,16 @@ def flatpak_guest_script(d, remotes, bundles):
         # One left unapplied would make the first unprivileged flatpak
         # command on the device need root to apply it.
         'if [ -d "$in/remotes.d" ]; then mkdir -p /etc/flatpak/remotes.d && cp "$in"/remotes.d/* /etc/flatpak/remotes.d/; fi',
-        'flatpak remotes --system --show-disabled --columns=name > /tmp/remotes',
+        # remotes.d only populates system installations. Import the same files
+        # explicitly for a user installation, including their keys and filters.
+        'if [ "$scope" = user ]; then',
+        '    for config in /etc/flatpak/remotes.d/*.flatpakrepo; do',
+        '        [ -f "$config" ] || continue',
+        '        remote=${config##*/}; remote=${remote%.flatpakrepo}',
+        '        flatpak remote-add --user --if-not-exists "$remote" "$config"',
+        '    done',
+        'fi',
+        'flatpak remotes --"$scope" --show-disabled --columns=name > /tmp/remotes',
     ]
 
     for i, remote in enumerate(remotes):
@@ -251,7 +264,7 @@ def flatpak_guest_script(d, remotes, bundles):
             # commit signatures are still verified.
             'if gvs=$(remote_config get %s gpg-verify-summary 2>/dev/null); then gvs_%d=$gvs; else gvs_%d=; fi'
                 % (r, i, i),
-            'flatpak remote-modify --system --url="file://$in/repos/"%s %s' % (r, r),
+            'flatpak remote-modify --"$scope" --url="file://$in/repos/"%s %s' % (r, r),
             'remote_config set %s gpg-verify-summary false' % r,
         ]
 
@@ -265,7 +278,7 @@ def flatpak_guest_script(d, remotes, bundles):
     for i, remote in enumerate(remotes):
         r = quote(remote)
         lines += [
-            'flatpak remote-modify --system --url="$url_%d" %s' % (i, r),
+            'flatpak remote-modify --"$scope" --url="$url_%d" %s' % (i, r),
             'if [ -n "$gvs_%d" ]; then remote_config set %s gpg-verify-summary "$gvs_%d"; '
             'else remote_config unset %s gpg-verify-summary; fi' % (i, r, i, r),
         ]
@@ -273,7 +286,7 @@ def flatpak_guest_script(d, remotes, bundles):
     # Pinned commits are what got installed.
     for remote, refs in remotes.items():
         for ref, commit in sorted(refs.items()):
-            lines.append('[ "$(flatpak info --system --show-commit %s)" = %s ] || '
+            lines.append('[ "$(flatpak info --"$scope" --show-commit %s)" = %s ] || '
                          '{ echo "vfpk: %s is not at commit %s"; exit 1; }'
                          % (quote(ref), quote(commit), quote(ref), quote(commit)))
 
@@ -286,7 +299,7 @@ def flatpak_guest_script(d, remotes, bundles):
         if not b['allow_no_origin']:
             # A bundle built without --repo-url gets a disabled origin remote
             # with no URL, so the app can never be updated.
-            lines.append('origin=$(flatpak info --system --show-origin %s)' % quote(ref))
+            lines.append('origin=$(flatpak info --"$scope" --show-origin %s)' % quote(ref))
             lines.append('[ -n "$(remote_config get "$origin" url 2>/dev/null)" ] || '
                          '{ echo "vfpk: %s has no origin URL (built without --repo-url); set '
                          'FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = \\"1\\" in %s to install it anyway"; exit 1; }'
@@ -297,9 +310,9 @@ def flatpak_guest_script(d, remotes, bundles):
     lines += [
         'echo "===VFPK_REFS_BEGIN==="',
         'for kind in app runtime; do',
-        '    for ref in $(flatpak list --system --$kind --columns=ref); do',
-        '        echo "$kind/$ref $(flatpak info --system --show-origin "$kind/$ref") '
-        '$(flatpak info --system --show-commit "$kind/$ref")"',
+        '    for ref in $(flatpak list --"$scope" --$kind --columns=ref); do',
+        '        echo "$kind/$ref $(flatpak info --"$scope" --show-origin "$kind/$ref") '
+        '$(flatpak info --"$scope" --show-commit "$kind/$ref")"',
         '    done',
         'done',
         'echo "===VFPK_REFS_END==="',
@@ -333,14 +346,56 @@ def flatpak_autostart_apps(d, bundles):
                 bb.fatal("FLATPAK_SERVICE_FILE[%s]: %s holds %d apps; give each its own package"
                          % (pn, pn, len(apps)))
         else:
-            user = d.getVarFlag('FLATPAK_APP_USER', pn) or d.getVar('FLATPAK_APP_USER')
+            user = flatpak_app_user(d, pn)
             if not user:
                 bb.fatal("BUNDLED_FLATPAKS: %s:autostart needs FLATPAK_APP_USER (or "
                          "FLATPAK_APP_USER[%s]); apps are not run as root" % (pn, pn))
-            if not re.fullmatch(r'[a-z_][a-z0-9_-]*', user):
-                bb.fatal("FLATPAK_APP_USER '%s' is not a user name" % user)
+            if not re.fullmatch(r'[a-z_][a-z0-9_-]*', user) or user == 'root':
+                bb.fatal("FLATPAK_APP_USER '%s' must be a non-root user name" % user)
+            if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' and user != d.getVar('FLATPAK_INSTALL_USER'):
+                bb.fatal("FLATPAK_APP_USER for %s must match FLATPAK_INSTALL_USER for a user installation" % pn)
         autostart[pn] = apps
     return autostart
+
+def flatpak_app_user(d, pn):
+    return (d.getVarFlag('FLATPAK_APP_USER', pn) or d.getVar('FLATPAK_APP_USER') or
+            (d.getVar('FLATPAK_INSTALL_USER') if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' else ''))
+
+def flatpak_user_account(d, user):
+    """Resolve the target account after extrausers has populated passwd."""
+    import re
+    with open(os.path.join(d.getVar('IMAGE_ROOTFS'), 'etc', 'passwd')) as f:
+        fields = next((line.rstrip('\n').split(':') for line in f if line.split(':')[0] == user), None)
+    if not fields:
+        bb.fatal("Flatpak user '%s' does not exist in the image" % user)
+    uid, gid, home = int(fields[2]), int(fields[3]), fields[5]
+    # These values become systemd paths and Environment entries.
+    if uid == 0 or not re.fullmatch(r'/[A-Za-z0-9_./-]+', home) or os.path.normpath(home) != home:
+        bb.fatal("Flatpak user '%s' needs a non-zero UID and an absolute home without spaces or systemd specifiers" % user)
+    return uid, gid, home
+
+def flatpak_user_seed_unit(d):
+    """Seed as the owner, so tar creates every file with the account's UID/GID."""
+    user = d.getVar('FLATPAK_INSTALL_USER')
+    _, _, home = flatpak_user_account(d, user)
+    directory = home + '/.local/share/flatpak'
+    return ''.join([
+        '[Unit]\n',
+        'Description=Seed Flatpak apps for %s\n' % user,
+        'DefaultDependencies=no\n',
+        'RequiresMountsFor=%s\n' % home,
+        'After=local-fs.target\n',
+        'Before=sysinit.target systemd-user-sessions.service\n',
+        'ConditionPathExists=%s\n' % d.getVar('FLATPAK_SEED'),
+        'ConditionPathExists=!%s/.vfpk-seeded\n' % directory,
+        '\n[Service]\n',
+        'Type=oneshot\nRemainAfterExit=yes\n',
+        'User=%s\n' % user,
+        'Environment=HOME=%s\n' % home,
+        'Environment=VFPK_SEED_DIR=%s\n' % directory,
+        'ExecStart=%s/vfpk-seed\n' % d.getVar('libexecdir'),
+        '\n[Install]\nWantedBy=sysinit.target\n',
+    ])
 
 # Runs last among the rootfs post-processing steps, so users created by
 # them (extrausers, for one) exist when the unit's user is checked.
@@ -352,16 +407,20 @@ python flatpak_autostart_units () {
     with open(d.getVar('FLATPAK_AUTOSTART')) as f:
         autostart = json.load(f)
 
+    if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user':
+        path = rootfs + d.getVar('systemd_system_unitdir') + '/vfpk-seed.service'
+        with open(path, 'w') as f:
+            f.write(flatpak_user_seed_unit(d))
+
     for pn, apps in sorted(autostart.items()):
         custom = d.getVarFlag('FLATPAK_SERVICE_FILE', pn)
         if custom:
             with open(custom) as f:
                 units = {apps[0]: f.read()}
         else:
-            user = d.getVarFlag('FLATPAK_APP_USER', pn) or d.getVar('FLATPAK_APP_USER')
-            with open(os.path.join(rootfs, 'etc', 'passwd')) as f:
-                if not any(line.split(':')[0] == user for line in f):
-                    bb.fatal("FLATPAK_APP_USER '%s' does not exist in the image" % user)
+            user = flatpak_app_user(d, pn)
+            uid, gid, home = flatpak_user_account(d, user)
+            scope = d.getVar('FLATPAK_INSTALL_SCOPE')
             env = (d.getVarFlag('FLATPAK_APP_ENV', pn) or d.getVar('FLATPAK_APP_ENV') or '').split()
             for pair in env:
                 # Quotes, backslashes and % have meaning in a unit file.
@@ -373,11 +432,16 @@ python flatpak_autostart_units () {
                     '[Unit]\n',
                     'Description=Flatpak app %s\n' % app,
                     'After=network.target\n',
+                    'Requires=user@%d.service\nAfter=user@%d.service\n' % (uid, uid),
+                    'Requires=vfpk-seed.service\nAfter=vfpk-seed.service\n' if d.getVar('FLATPAK_DEPLOY_MODE') == 'seed' else '',
                     '\n',
                     '[Service]\n',
                     'User=%s\n' % user,
+                    'Environment=HOME=%s\n' % home,
+                    'Environment=XDG_RUNTIME_DIR=/run/user/%d\n' % uid,
+                    'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%d/bus\n' % uid,
                     ''.join('Environment="%s"\n' % pair for pair in env),
-                    'ExecStart=%s/flatpak run --system %s\n' % (d.getVar('bindir'), app),
+                    'ExecStart=%s/flatpak run --%s %s\n' % (d.getVar('bindir'), scope, app),
                     'Restart=on-failure\n',
                     '\n',
                     '[Install]\n',
@@ -606,6 +670,9 @@ python flatpak_cross_install () {
     with open(refs_file, 'w') as f:
         f.write(''.join(line + '\n' for line in installed))
     os.chmod(refs_file, 0o644)
+    with open(rootfs + d.getVar('FLATPAK_INSTALLED_SCOPE'), 'w') as f:
+        f.write(d.getVar('FLATPAK_INSTALL_SCOPE') +
+                (' ' + d.getVar('FLATPAK_INSTALL_USER') if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' else '') + '\n')
 
     # The bundles are installed; the packages that carried them leave nothing
     # behind in the image.

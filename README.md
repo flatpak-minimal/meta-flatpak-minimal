@@ -221,7 +221,7 @@ Options follow the package name, separated by colons:
 
 | Option | Effect |
 | --- | --- |
-| `autostart` | Generate and enable `flatpak-app-<ID>.service` for each app in the package. It runs `flatpak run --system <ID>` as `FLATPAK_APP_USER` (required; `FLATPAK_APP_USER[pn]` overrides it), with the `KEY=VALUE` pairs of `FLATPAK_APP_ENV`. `FLATPAK_SERVICE_FILE[pn]`, an absolute path, replaces the generated unit. Needs systemd. |
+| `autostart` | Generate and enable `flatpak-app-<ID>.service` for each app in the package. It runs `flatpak run --<scope> <ID>` as `FLATPAK_APP_USER` (required for system scope; user scope defaults to the install account; `FLATPAK_APP_USER[pn]` overrides it), with the `KEY=VALUE` pairs of `FLATPAK_APP_ENV`. `FLATPAK_SERVICE_FILE[pn]`, an absolute path, replaces the generated unit. Needs systemd. |
 | `external` | Do not add the package to `IMAGE_INSTALL`; it reaches the image some other way. |
 
 The image needs `vfpk-<arch>` for its architecture in `BBMULTICONFIG`; an
@@ -272,6 +272,31 @@ On a read-only rootfs, mount persistent storage at `/var/lib/flatpak` with
 flatpak lets an unprivileged user update system apps through polkit when
 the user has an active local session (a desktop or kiosk session on a seat).
 Anything else, such as a background updater, needs a polkit rule.
+
+### Per-user installations
+
+System scope is the default. For a user installation, set:
+
+```bitbake
+FLATPAK_INSTALL_SCOPE:pn-agl-ivi-demo-flutter = "user"
+FLATPAK_INSTALL_USER:pn-agl-ivi-demo-flutter = "agl-driver"
+FLATPAK_DEPLOY_MODE:pn-agl-ivi-demo-flutter = "seed"
+```
+
+The build installs apps, runtimes and remotes offline. On first boot,
+`vfpk-seed.service` extracts them as that user into `~/.local/share/flatpak`.
+User scope requires `seed`; the account must exist and its home must be
+writable and persistent. Existing installations are preserved; system
+installations are not migrated. Custom data-directory locations are unsupported.
+
+Run `flatpak list --user`, `flatpak update --user` and `flatpak run --user <ID>`
+as the install account. `:autostart` uses that account by default; an explicit
+`FLATPAK_APP_USER` must match it. Custom service units must use the same account,
+wait for `vfpk-seed.service` and launch with `--user`.
+
+Both scopes can use first-boot seeding. System scope also supports `rootfs`
+and `partition`, which need no extraction. Always launch as the session owner;
+root using another user's runtime directory can leave root-owned temporary files.
 
 ### Flatpak content built by this build
 

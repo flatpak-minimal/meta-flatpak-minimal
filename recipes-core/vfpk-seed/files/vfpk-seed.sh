@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: MIT
 #
 # vfpk-seed: unpack the flatpak installation seeded at build time into the
-# writable /var/lib/flatpak, once.
+# writable /var/lib/flatpak, once. A per-user seed unit sets VFPK_SEED_DIR
+# to the user's installation and runs this script as that user.
 #
 # The marker makes it run once per installation, and an existing
 # installation is never touched: apps the user installed or updated in the
@@ -14,7 +15,7 @@
 set -eu
 
 SEED=@SEED@
-DIR=@DIR@
+DIR=${VFPK_SEED_DIR:-@DIR@}
 MARKER=$DIR/.vfpk-seeded
 TMP=$DIR/.vfpk-seed.tmp
 
