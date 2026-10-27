@@ -37,6 +37,23 @@ def flatpak_repo_check_signing(d):
         bb.fatal("FLATPAK_GPGID is set, but FLATPAK_GPGHOME '%s' is not a GnuPG home directory"
                  % d.getVar('FLATPAK_GPGHOME'))
 
+def flatpak_repo_export_key(d):
+    """The public key of FLATPAK_GPGID, binary, without third-party signatures."""
+    import subprocess
+    env = dict(os.environ)
+    env['PATH'] = '%s:%s' % (d.getVar('STAGING_BINDIR_NATIVE'), env.get('PATH', ''))
+    env['PSEUDO_UNLOAD'] = '1'
+    proc = subprocess.run(['gpg', '--homedir', d.getVar('FLATPAK_GPGHOME'), '--batch',
+                           '--export-options', 'export-minimal', '--export', d.getVar('FLATPAK_GPGID')],
+                          env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # gpg exits 0 having exported nothing for an unknown key.
+    if proc.returncode != 0 or not proc.stdout:
+        bb.fatal("cannot export the public key of FLATPAK_GPGID %s from %s:\n%s"
+                 % (d.getVar('FLATPAK_GPGID'), d.getVar('FLATPAK_GPGHOME'), proc.stderr.decode(errors='replace')))
+    return proc.stdout
+# Where the keyring is does not change what is signed.
+flatpak_repo_export_key[vardepsexclude] = "FLATPAK_GPGHOME"
+
 def flatpak_repo_ostree(d, args):
     import subprocess
     env = dict(os.environ)

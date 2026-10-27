@@ -46,13 +46,68 @@ FLATPAK_PUBLISH_RECIPES ??= ""
 # default. A delta lives as long as the commit it leads to.
 FLATPAK_PUBLISH_DELTAS ??= "previous"
 
+# The remote the repository is published as. With a URL, NAME.flatpakrepo is
+# written into the repository, so syncing the directory publishes it too:
+#   flatpak remote-add NAME URL/NAME.flatpakrepo
+# It carries the public key of FLATPAK_GPGID, which a URL therefore needs.
+FLATPAK_PUBLISH_REMOTE_NAME ??= ""
+FLATPAK_PUBLISH_REMOTE_URL ??= ""
+FLATPAK_PUBLISH_REMOTE_TITLE ??= ""
+FLATPAK_PUBLISH_REMOTE_HOMEPAGE ??= ""
+
 python () {
+    import re
     for word in (d.getVar('FLATPAK_PUBLISH_DELTAS') or '').split():
         if word not in ('previous', 'empty'):
             bb.fatal("FLATPAK_PUBLISH_DELTAS: unknown '%s'; use previous and/or empty" % word)
+    # Skipped rather than fatal: a URL set for every recipe would otherwise
+    # stop every build, not just this one.
+    if d.getVar('FLATPAK_PUBLISH_REMOTE_URL'):
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', d.getVar('FLATPAK_PUBLISH_REMOTE_NAME') or ''):
+            raise bb.parse.SkipRecipe("FLATPAK_PUBLISH_REMOTE_URL is set; FLATPAK_PUBLISH_REMOTE_NAME "
+                                      "must be a remote name")
+        if not d.getVar('FLATPAK_GPGID'):
+            raise bb.parse.SkipRecipe("FLATPAK_PUBLISH_REMOTE_URL is set, but FLATPAK_GPGID is not: the "
+                                      ".flatpakrepo carries the key that signs the repository")
+        # Each value is one line of a keyfile, where a backslash escapes.
+        for var in ('FLATPAK_PUBLISH_REMOTE_URL', 'FLATPAK_PUBLISH_REMOTE_TITLE', 'FLATPAK_PUBLISH_REMOTE_HOMEPAGE'):
+            if re.search(r'[\r\n\\]', d.getVar(var) or ''):
+                raise bb.parse.SkipRecipe("%s contains a line break or a backslash" % var)
     for pn in (d.getVar('FLATPAK_PUBLISH_RECIPES') or '').split():
         d.appendVarFlag('do_flatpak_repo_index', 'depends', ' %s:do_deploy_flatpak' % pn)
 }
+
+def flatpak_publish_flatpakrepo(d, repo):
+    """Write NAME.flatpakrepo, what 'flatpak remote-add' takes, into the
+    repository when it has a URL, and remove any other."""
+    import base64
+    import glob
+
+    # A remote renamed or no longer published leaves no file behind to sync.
+    for old in glob.glob(os.path.join(repo, '*.flatpakrepo')):
+        os.unlink(old)
+    url = d.getVar('FLATPAK_PUBLISH_REMOTE_URL')
+    if not url:
+        return
+    if not url.startswith('https://'):
+        bb.warn("FLATPAK_PUBLISH_REMOTE_URL does not use https: %s" % url)
+
+    lines = ['[Flatpak Repo]']
+    if d.getVar('FLATPAK_PUBLISH_REMOTE_TITLE'):
+        lines.append('Title=%s' % d.getVar('FLATPAK_PUBLISH_REMOTE_TITLE'))
+    lines.append('Url=%s' % d.getVar('FLATPAK_PUBLISH_REMOTE_URL'))
+    if d.getVar('FLATPAK_PUBLISH_REMOTE_HOMEPAGE'):
+        lines.append('Homepage=%s' % d.getVar('FLATPAK_PUBLISH_REMOTE_HOMEPAGE'))
+    # Binary, not armored: flatpak base64-decodes GPGKey into a keyring.
+    lines.append('GPGKey=%s' % base64.b64encode(flatpak_repo_export_key(d)).decode('ascii'))
+
+    path = os.path.join(repo, d.getVar('FLATPAK_PUBLISH_REMOTE_NAME') + '.flatpakrepo')
+    # Written aside and renamed, so a sync never sees half of it.
+    with open(path + '.tmp', 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    os.chmod(path + '.tmp', 0o644)
+    os.replace(path + '.tmp', path)
+    bb.note("wrote %s" % path)
 
 python do_flatpak_repo_index () {
     import re
@@ -133,6 +188,7 @@ python do_flatpak_repo_index () {
                     "verify the remote's summary refuse it" % repo)
         flatpak_repo_ostree(d, args)
         flatpak_repo_ostree(d, ['--repo=%s' % repo, 'fsck', '--quiet'])
+        flatpak_publish_flatpakrepo(d, repo)
     finally:
         bb.utils.unlockfile(lock)
 

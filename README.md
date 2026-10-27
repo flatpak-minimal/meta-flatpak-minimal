@@ -431,8 +431,25 @@ been deployed; `FLATPAK_PUBLISH_RECIPES` builds named producers first.
 SDKs.
 
 `bitbake flatpak-repo-index-dev` does the same into `repo-dev/`, SDKs
-included. Publish it apart from the device repository, for developers to
-build apps against.
+included, with deltas from scratch as well, since developers install over the
+network. Publish it apart from the device repository, for developers to build
+apps against.
+
+With `FLATPAK_PUBLISH_REMOTE_URL` set to where a repository will be served,
+the index also writes `<FLATPAK_PUBLISH_REMOTE_NAME>.flatpakrepo` into it,
+with `FLATPAK_PUBLISH_REMOTE_TITLE`, `FLATPAK_PUBLISH_REMOTE_HOMEPAGE` and
+the public key of `FLATPAK_GPGID`, so syncing the directory publishes it too.
+A URL needs a signing key; keys only ever come from `FLATPAK_GPGID` and
+`FLATPAK_GPGHOME`. Set them globally, not for the index alone: flatpak
+checks the signature of each commit as well as of the summary, so the
+producers sign with the same key. ostree signs in batch mode, so the key has
+no passphrase. `repo-dev` is named `flatpak-minimal-sdk`:
+
+```
+FLATPAK_GPGID = "<key id>"
+FLATPAK_GPGHOME = "/path/to/gnupg-home"
+FLATPAK_PUBLISH_REMOTE_URL:pn-flatpak-repo-index-dev = "https://example.com/flatpak/repo-dev"
+```
 
 `FLATPAK_DEPLOY_BUNDLES = "1"` on a producer also deploys each of its refs
 as a single-file bundle, `<id>-<branch>-<arch>.flatpak`, for
@@ -449,6 +466,84 @@ different CPU tunes or machines (a Cortex-A57 and a Cortex-A76 build of one
 aarch64 app) differ, and the index refuses them: publish from one build per
 flatpak arch, ideally for a baseline tune, and choose it with
 `FLATPAK_PUBLISH_PACKAGE_ARCHS`.
+
+#### Building apps against the SDK
+
+`org.flatpak_minimal.Sdk` is the runtime's packages from the same build with
+their development files, a native toolchain, autotools, cmake, meson and
+ninja, and `eu-strip` and `debugedit` for flatpak-builder's strip and
+debuginfo step. Apps built in it run on `org.flatpak_minimal.Platform`, so a
+developer builds a native app with standard flatpak-builder and needs
+neither bitbake nor Freedesktop's runtime:
+
+```
+flatpak remote-add --user flatpak-minimal-sdk https://example.com/flatpak/repo-dev/flatpak-minimal-sdk.flatpakrepo
+flatpak install --user --arch=aarch64 flatpak-minimal-sdk \
+    org.flatpak_minimal.Sdk//wrynose org.flatpak_minimal.Platform//wrynose
+flatpak-builder --user --arch=aarch64 --repo=repo build-dir org.example.App.yml
+```
+
+`samples/hello-meson/` is such an app: a meson C program and its manifest,
+which builds offline. Before the repository is published, a local build
+works the same way with
+`flatpak remote-add --user --no-gpg-verify flatpak-minimal-sdk file:///path/to/tmp/deploy/flatpak/repo-dev`.
+`oe-selftest -r flatpak_sdk` checks that the SDK carries what flatpak-builder
+runs and that the `.flatpakrepo` carries the signing key.
+
+- **Branches** follow the Yocto release the build is on (`wrynose`); a new
+  release is a new branch, so a manifest names the release it targets in
+  `runtime-version`.
+- **Arches.** Publish from the generic multiconfigs (below) for every arch
+  developers target: `aarch64`, `x86_64`, `arm` (armv7) and `riscv64`. An
+  arch other than the workstation's runs through qemu-user and binfmt_misc:
+  install `qemu-user-static` (Debian, Ubuntu, Fedora), then check that
+  `cat /proc/sys/fs/binfmt_misc/qemu-aarch64` shows `enabled` and an
+  interpreter with the `F` flag before running flatpak-builder with
+  `--arch`.
+- **Flutter apps** still build with bitbake (`flatpak-flutter-app`, below):
+  the SDK has no Dart AOT compiler, so flatpak-builder can build their native
+  parts only.
+
+#### Signing the developer repository
+
+CI builds `repo-dev` on every run, but signs it only in the `flatpak-signing`
+environment, which the workflow uses for published releases and dispatched
+runs on `master` or a tag. The workflow only names the environment; the gate
+is its settings, and two mistakes quietly undo it. If the workflow names
+`flatpak-signing` before anyone has created it, GitHub creates it with no
+reviewer and no branch policy. If the key is a repository secret, every
+workflow on every branch can read it.
+
+1. **The environment.** Create `flatpak-signing` (Settings → Environments)
+   before the first release or dispatched run. Add a required reviewer, with
+   "Prevent self-review" on. Under deployment branches and tags, choose
+   "Selected branches and tags" and add two rules: branch `master` and
+   tag `*`.
+2. **The secret.** Add `FLATPAK_SDK_GPG_KEY` as a secret of that
+   environment, never of the repository or the organization.
+3. **The key.** Make a dedicated key with no passphrase, since ostree signs
+   in batch mode, and export it armored for the secret:
+
+   ```
+   export GNUPGHOME=$(mktemp -d)
+   gpg --batch --pinentry-mode loopback --passphrase '' \
+       --quick-gen-key 'flatpak-minimal SDK <...>' default sign 2y
+   gpg --list-secret-keys    # prints the fingerprint
+   gpg --armor --export-secret-keys <fingerprint> > sdk-signing.asc
+   ```
+
+   Keep an offline backup of `sdk-signing.asc` and delete the temporary
+   GnuPG home. The key expires after two years. Clients get the public key
+   from the `.flatpakrepo`, and the workflow signs with one key only, so
+   once the secret holds a new key, clients that have not imported it
+   refuse updates. To rotate it before the old one expires, make a new key
+   and publish its public key (`gpg --armor --export <fingerprint>`) first.
+   Existing clients import it with
+   `flatpak remote-modify --gpg-import=<key file> flatpak-minimal-sdk`.
+   Then replace the secret and publish again. A client that missed the new
+   key can remove the remote and add it again from the new `.flatpakrepo`.
+4. **Checking it.** A dispatched run on `master` stops for approval before
+   it starts. One on any other branch builds `repo-dev` unsigned.
 
 #### Runtimes for every device of an arch
 
@@ -533,13 +628,11 @@ mode it carries, `FLUTTER_ENGINE_<MODE>` (`FLUTTER_ENGINE_RELEASE`). There is no
 `gen_snapshot` for the build machine only, so an app's Dart code is still
 compiled on the host.
 
-To build with it on a workstation, publish `repo-dev`, add it as a remote
-and point flatpak-builder at the SDK. Another arch builds through
-qemu-user (binfmt):
+To build native code against it on a workstation, add `repo-dev` as in
+"Building apps against the SDK" and install the extensions with the SDK:
 
 ```
-flatpak --user remote-add --no-gpg-verify vfpk-dev file:///path/to/tmp/deploy/flatpak/repo-dev
-flatpak --user install --arch=aarch64 vfpk-dev org.flatpak_minimal.Sdk//wrynose \
+flatpak --user install --arch=aarch64 flatpak-minimal-sdk org.flatpak_minimal.Sdk//wrynose \
     org.flatpak_minimal.Platform//wrynose org.flatpak_minimal.Sdk.Extension.flutter3_47_7_deb287481e3c//wrynose \
     org.flatpak_minimal.Flutter.Engine.release//3.47.7-deb287481e3c-wrynose
 flatpak-builder --arch=aarch64 --repo=repo build-dir org.example.App.yml
