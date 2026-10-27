@@ -71,11 +71,7 @@ python flatpak_deploy_bundles () {
     if d.getVar('FLATPAK_GPGID'):
         keys = os.path.join(d.getVar('WORKDIR'), 'flatpak-bundle-keys.gpg')
         with open(keys, 'wb') as f:
-            proc = subprocess.run(['gpg', '--homedir', d.getVar('FLATPAK_GPGHOME'), '--export',
-                                   d.getVar('FLATPAK_GPGID')], env=env, stdout=f, stderr=subprocess.PIPE)
-        if proc.returncode != 0 or not os.path.getsize(keys):
-            bb.fatal("exporting the public key of FLATPAK_GPGID %s failed:\n%s"
-                     % (d.getVar('FLATPAK_GPGID'), proc.stderr.decode(errors='replace')))
+            f.write(flatpak_repo_export_key(d))
         args.append('--gpg-keys=%s' % keys)
 
     for ref in flatpak_repo_ostree(d, ['--repo=%s' % repo, 'refs']).split():
