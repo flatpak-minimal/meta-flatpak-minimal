@@ -80,6 +80,44 @@ class FlatpakTest(OERuntimeTestCase):
         status, output = self.flatpak('repair --dry-run', timeout=600)
         self.assertEqual(status, 0, msg='flatpak repair failed: %s' % output)
 
+    def mountinfo(self, path):
+        """MAJOR:MINOR and root within the filesystem of the mount at PATH."""
+        status, output = self.target.run("awk '$5 == \"%s\" {print $3, $4}' /proc/self/mountinfo" % path)
+        lines = output.splitlines() if status == 0 else []
+        return lines[-1].split() if lines else None
+
+    @OETestDepends(['ssh.SSHTest.test_ssh'])
+    def test_flatpak_data_partition(self):
+        """The data partition carries the installations and, grown, reaches the end of its disk."""
+        if self.td.get('FLATPAK_DEPLOY_MODE') != 'partition':
+            self.skipTest('the image has no flatpak data partition')
+        mount = self.td.get('FLATPAK_DATA_MOUNT')
+        data = self.mountinfo(mount)
+        self.assertTrue(data, msg='the data partition is not mounted at %s' % mount)
+        for path in self.td.get('FLATPAK_DATA_DIRS', '').split():
+            self.assertEqual(self.mountinfo(path), [data[0], '/' + path.rstrip('/').rsplit('/', 1)[1]],
+                             msg='%s is not bind-mounted from %s' % (path, mount))
+
+        if self.td.get('FLATPAK_INSTALL_SCOPE') == 'user':
+            user = self.td.get('FLATPAK_INSTALL_USER')
+            status, output = self.target.run(
+                'stat -c %%U "$(getent passwd %s | cut -d: -f6)/.local/share/flatpak/repo"' % quote(user))
+            self.assertEqual((status, output.strip()), (0, user),
+                             msg='the user installation does not belong to %s: %s' % (user, output))
+
+        if self.td.get('FLATPAK_DATA_GROW') != '1':
+            return
+        # In 512-byte sectors; past the partition, only the backup GPT and
+        # alignment remain once it has grown. Under runqemu the disk is the
+        # image's size, so this only shows growth on a larger disk.
+        status, output = self.target.run(
+            'p=$(readlink -f /sys/dev/block/%s); echo $(cat $p/start) $(cat $p/size) $(cat $p/../size)' % data[0])
+        self.assertEqual(status, 0, msg='cannot read the partition geometry: %s' % output)
+        start, size, total = (int(n) for n in output.split())
+        self.assertLess(total - start - size, 4096,
+                        msg='the data partition leaves %d MiB unused at the end of its disk'
+                            % ((total - start - size) // 2048))
+
     @OETestDepends(['flatpak.FlatpakTest.test_flatpak_installed_refs'])
     def test_flatpak_run(self):
         """The test app runs in its sandbox."""
