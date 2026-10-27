@@ -54,7 +54,7 @@ FLATPAK_APP_COMMAND ??= "${FLATPAK_FLUTTER_EMBEDDER} -b ${FLATPAK_FLUTTER_BUNDLE
 # flutter-app-native installs native-assets libraries here; dlopen finds them
 # by name through the linker search path.
 FLATPAK_APP_LIBDIRS ??= "${FLATPAK_FLUTTER_BUNDLE}/lib/native_assets"
-# App recipes put libraries Dart opens by bare name (dlopen("libsqlite3.so"))
+# App recipes put libraries Dart opens by bare name (dlopen("libfoo.so"))
 # beside libapp.so; in the sandbox that directory belongs to the app alone.
 FLATPAK_APP_LD_LIBRARY_PATH ??= "${FLATPAK_FLUTTER_BUNDLE}/lib"
 FLATPAK_APP_RUNTIME ??= "${FLATPAK_PLATFORM_ID}"
