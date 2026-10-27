@@ -248,7 +248,12 @@ def flatpak_guest_script(d, remotes, bundles):
         '    for config in /etc/flatpak/remotes.d/*.flatpakrepo; do',
         '        [ -f "$config" ] || continue',
         '        remote=${config##*/}; remote=${remote%.flatpakrepo}',
-        '        flatpak remote-add --user --if-not-exists "$remote" "$config"',
+        '        if flatpak remotes --user --show-disabled --columns=name | grep -qx "$remote"; then continue; fi',
+        # Added disabled, then enabled: remote-add fetches the summary for
+        # extra metadata, which the guest cannot reach, unless the remote is
+        # disabled.
+        '        flatpak remote-add --user --disable "$remote" "$config"',
+        '        flatpak remote-modify --user --enable "$remote"',
         '    done',
         'fi',
         'flatpak remotes --"$scope" --show-disabled --columns=name > /tmp/remotes',
