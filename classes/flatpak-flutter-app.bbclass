@@ -50,7 +50,7 @@ FLATPAK_FLUTTER_ENGINE_DIR = "flutter"
 FLATPAK_FLUTTER_EMBEDDER ??= "/app/${FLATPAK_FLUTTER_HOMESCREEN_DIR}/bin/homescreen"
 
 FLATPAK_APP_FILES ??= "${FLATPAK_FLUTTER_BUNDLE}"
-FLATPAK_APP_COMMAND ??= "${FLATPAK_FLUTTER_EMBEDDER} -b ${FLATPAK_FLUTTER_BUNDLE}"
+FLATPAK_APP_COMMAND ??= "${FLATPAK_FLUTTER_EMBEDDER} --app-id ${FLATPAK_APP_ID} -b ${FLATPAK_FLUTTER_BUNDLE}"
 # flutter-app-native installs native-assets libraries here; dlopen finds them
 # by name through the linker search path.
 FLATPAK_APP_LIBDIRS ??= "${FLATPAK_FLUTTER_BUNDLE}/lib/native_assets"
