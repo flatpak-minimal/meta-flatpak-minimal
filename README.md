@@ -284,7 +284,10 @@ FLATPAK_DEPLOY_MODE:pn-agl-ivi-demo-flutter = "seed"
 ```
 
 The build installs apps, runtimes and remotes offline. On first boot,
-`vfpk-seed.service` extracts them as that user into `~/.local/share/flatpak`.
+`vfpk-seed.service` extracts them as that user into `~/.local/share/flatpak`
+before the user's session starts; the rest of the boot does not wait. It also
+creates an empty system installation, which flatpak needs before unprivileged
+commands that cover every installation, such as `flatpak list`, can run.
 User scope requires `seed`; the account must exist and its home must be
 writable and persistent. Existing installations are preserved; system
 installations are not migrated. Custom data-directory locations are unsupported.
