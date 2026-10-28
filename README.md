@@ -518,7 +518,10 @@ FLATPAK_APP_ID = "org.example.App"
 
 and runs as `/app/homescreen/bin/homescreen --app-id <FLATPAK_APP_ID> -b /app/share/flutter/<app>/<version>/release`
 on `org.flatpak_minimal.Platform`, with the homescreen extension and the
-engine extension of its mode and engine version.
+engine extension of its mode and engine version. A different embedder is
+set with `FLATPAK_FLUTTER_EMBEDDER` together with its options in
+`FLATPAK_FLUTTER_EMBEDDER_ARGS` (default `--app-id ${FLATPAK_APP_ID}`, an
+option of the homescreen embedder).
 `flatpak-minimal-appstream-dart-flathub-catalog` is packaged this way.
 
 ### Testing
