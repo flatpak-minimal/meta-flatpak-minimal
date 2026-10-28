@@ -554,6 +554,8 @@ varflags:
 FLATPAK_REMOTES = "flathub acme"
 FLATPAK_REMOTE_URL[acme] = "https://flatpak.acme.example/repo/"
 FLATPAK_REMOTE_TITLE[acme] = "Acme"
+FLATPAK_REMOTE_COMMENT[acme] = "Apps for Acme devices"
+FLATPAK_REMOTE_HOMEPAGE[acme] = "https://acme.example/"
 FLATPAK_REMOTE_GPGKEY[acme] = "acme.gpg"
 FLATPAK_REMOTE_COLLECTION_ID[acme] = "com.acme.Apps"
 FLATPAK_REMOTE_FILTER[acme] = "acme.filter"
@@ -564,6 +566,12 @@ search path, so add them from a `flatpak-remotes.bbappend` with
 `FILESEXTRAPATHS`. The key must be binary (`gpg --export KEYID`), not ASCII
 armored. A remote without a key is refused unless
 `FLATPAK_REMOTE_NO_GPG[name] = "1"`.
+
+`FLATPAK_REMOTE_COMMENT`, `_DESCRIPTION`, `_HOMEPAGE`, `_ICON` and
+`_DEFAULT_BRANCH` set the rest of what flatpak shows for a remote, which it
+otherwise reads from the remote's summary the first time the device reaches
+it. Set at build time, the remote is complete offline from first boot.
+Flathub's come from its published `flathub.flatpakrepo`.
 
 flatpak applies a remotes.d file once, the first time it opens the system
 installation, and only if no remote of that name exists yet. There is no

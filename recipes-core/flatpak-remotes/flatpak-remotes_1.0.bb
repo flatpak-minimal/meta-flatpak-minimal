@@ -22,6 +22,11 @@ REQUIRED_DISTRO_FEATURES = "polkit"
 # One entry per remote name. Each remote takes these varflags:
 #   FLATPAK_REMOTE_URL[name]           repository URL (required)
 #   FLATPAK_REMOTE_TITLE[name]         human-readable title
+#   FLATPAK_REMOTE_COMMENT[name]       one-line summary
+#   FLATPAK_REMOTE_DESCRIPTION[name]   longer description
+#   FLATPAK_REMOTE_HOMEPAGE[name]      homepage URL
+#   FLATPAK_REMOTE_ICON[name]          icon URL
+#   FLATPAK_REMOTE_DEFAULT_BRANCH[name] branch to install when none is given
 #   FLATPAK_REMOTE_GPGKEY[name]        file in this recipe's search path
 #                                      holding the binary (not ASCII armored)
 #                                      public key; 'gpg --export KEYID'
@@ -35,10 +40,18 @@ REQUIRED_DISTRO_FEATURES = "polkit"
 # flatpak applies a remotes.d file once, the first time it opens the system
 # repository and only if no remote of that name exists yet. Installations
 # seeded at build time already carry the remote, so they keep its origin.
+#
+# The descriptive keys are what flatpak otherwise reads from the remote's
+# summary, which a build has no network to fetch: set here, the device has
+# the remote complete from first boot.
 FLATPAK_REMOTES ?= "flathub"
 
 FLATPAK_REMOTE_URL[flathub] ?= "https://dl.flathub.org/repo/"
 FLATPAK_REMOTE_TITLE[flathub] ?= "Flathub"
+FLATPAK_REMOTE_COMMENT[flathub] ?= "Central repository of Flatpak applications"
+FLATPAK_REMOTE_DESCRIPTION[flathub] ?= "Central repository of Flatpak applications"
+FLATPAK_REMOTE_HOMEPAGE[flathub] ?= "https://flathub.org/"
+FLATPAK_REMOTE_ICON[flathub] ?= "https://dl.flathub.org/repo/logo.svg"
 # Exported from https://dl.flathub.org/repo/flathub.flatpakrepo; fingerprint
 # 6E5C05D979C76DAF93C081354184DD4D907A7CAE, expires 2027-06-14.
 FLATPAK_REMOTE_GPGKEY[flathub] ?= "flathub.gpg"
@@ -85,7 +98,9 @@ python () {
 }
 
 # The varflags are read in python; list them so a change rebuilds the recipe.
-FLATPAK_REMOTE_VARS = "FLATPAK_REMOTE_URL FLATPAK_REMOTE_TITLE FLATPAK_REMOTE_GPGKEY \
+FLATPAK_REMOTE_VARS = "FLATPAK_REMOTE_URL FLATPAK_REMOTE_TITLE FLATPAK_REMOTE_COMMENT \
+    FLATPAK_REMOTE_DESCRIPTION FLATPAK_REMOTE_HOMEPAGE FLATPAK_REMOTE_ICON \
+    FLATPAK_REMOTE_DEFAULT_BRANCH FLATPAK_REMOTE_GPGKEY \
     FLATPAK_REMOTE_COLLECTION_ID FLATPAK_REMOTE_FILTER FLATPAK_REMOTE_NO_GPG"
 do_install[vardeps] += "FLATPAK_REMOTES ${FLATPAK_REMOTE_VARS}"
 
@@ -105,9 +120,15 @@ python do_install () {
             bb.warn("flatpak remote '%s' does not use https: %s" % (name, url))
 
         lines = ['[Flatpak Repo]', 'Url=%s' % url]
-        title = d.getVarFlag('FLATPAK_REMOTE_TITLE', name)
-        if title:
-            lines.append('Title=%s' % title)
+        for var, key in (('FLATPAK_REMOTE_TITLE', 'Title'),
+                         ('FLATPAK_REMOTE_COMMENT', 'Comment'),
+                         ('FLATPAK_REMOTE_DESCRIPTION', 'Description'),
+                         ('FLATPAK_REMOTE_HOMEPAGE', 'Homepage'),
+                         ('FLATPAK_REMOTE_ICON', 'Icon'),
+                         ('FLATPAK_REMOTE_DEFAULT_BRANCH', 'DefaultBranch')):
+            value = d.getVarFlag(var, name)
+            if value:
+                lines.append('%s=%s' % (key, value))
 
         key = d.getVarFlag('FLATPAK_REMOTE_GPGKEY', name)
         if key:
