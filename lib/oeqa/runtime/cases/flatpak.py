@@ -64,6 +64,17 @@ class FlatpakTest(OERuntimeTestCase):
             self.assertIn(origin, remotes, msg='%s: origin %s is not a remote' % (ref, origin))
 
     @OETestDepends(['flatpak.FlatpakTest.test_flatpak_installed_refs'])
+    def test_flatpak_list_installations(self):
+        """With a user installation, the account can list every installation."""
+        status, output = self.target.run('cat /usr/share/vfpk/installed.scope')
+        scope = output.split() if status == 0 else ['system']
+        if scope[0] != 'user':
+            self.skipTest('the image has a system installation')
+        # Without the system installation, flatpak list with no scope fails.
+        status, output = self.target.run('su - %s -c %s' % (quote(scope[1]), quote('flatpak list')))
+        self.assertEqual(status, 0, msg='flatpak list as %s failed: %s' % (scope[1], output))
+
+    @OETestDepends(['flatpak.FlatpakTest.test_flatpak_installed_refs'])
     def test_flatpak_repair(self):
         """The installation is consistent."""
         status, output = self.flatpak('repair --dry-run', timeout=600)

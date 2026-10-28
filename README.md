@@ -283,19 +283,29 @@ FLATPAK_INSTALL_USER:pn-agl-ivi-demo-flutter = "agl-driver"
 FLATPAK_DEPLOY_MODE:pn-agl-ivi-demo-flutter = "seed"
 ```
 
-The build installs apps, runtimes and remotes offline. On first boot,
-`vfpk-seed.service` extracts them as that user into `~/.local/share/flatpak`
-before the user's session starts; the rest of the boot does not wait. It also
-creates an empty system installation, which flatpak needs before unprivileged
-commands that cover every installation, such as `flatpak list`, can run.
-User scope requires `seed`; the account must exist and its home must be
-writable and persistent. Existing installations are preserved; system
-installations are not migrated. Custom data-directory locations are unsupported.
+The build installs apps, runtimes and remotes offline, into a seed of their
+own (`/usr/share/vfpk/user-seed.tar`). On first boot,
+`vfpk-seed-user.service` extracts it as that user into
+`~/.local/share/flatpak`. That account's logins wait for it; other logins and
+the rest of the boot do not, though with large runtimes in the seed the
+account's first login can take a while on slow storage.
+`vfpk-system-repo.service` creates an empty system installation on every
+boot it is missing, as it is after each reboot on a volatile `/var`. flatpak
+needs it before unprivileged commands that cover every installation, such as
+`flatpak list`, can run. User scope requires `seed`; the account must exist
+and its home must be writable and persistent. Existing installations are
+preserved; system installations are not migrated. Custom data-directory
+locations are unsupported.
+
+A user installation is owned by its account: anything running as that
+account can install, update, remove or modify its apps and runtimes. That is
+what lets it update without root; use system scope where apps must not be
+changeable by the account that runs them.
 
 Run `flatpak list --user`, `flatpak update --user` and `flatpak run --user <ID>`
 as the install account. `:autostart` uses that account by default; an explicit
 `FLATPAK_APP_USER` must match it. Custom service units must use the same account,
-wait for `vfpk-seed.service` and launch with `--user`.
+wait for `vfpk-seed-user.service` and launch with `--user`.
 
 Both scopes can use first-boot seeding. System scope also supports `rootfs`
 and `partition`, which need no extraction. Always launch as the session owner;
@@ -571,6 +581,11 @@ its origin, that the origins are configured remotes, that `flatpak repair`
 is clean and that the test app runs in its sandbox. CI runs it on all four
 machines. The include lets root log in without a password; it is for tests
 only.
+
+`conf/include/vfpk-testimage-user.inc` puts the same content in a user
+installation instead, seeded into the home of a test account (`vfpktest`) on
+first boot. The suite then runs as that account and also checks that it can
+list every installation. CI runs it on qemux86-64.
 
 ## Remotes
 

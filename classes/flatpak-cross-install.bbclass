@@ -86,7 +86,9 @@ FLATPAK_DATA_UUID ??= ""
 # not exist is a no-op.
 FLATPAK_DATA_FSTAB_OPTIONS ??= "defaults,x-systemd.after=var-volatile-lib.service"
 FLATPAK_DATA_FSTAB ??= "${@'LABEL=%s %s/lib/flatpak ext4 %s 0 2' % (d.getVar('FLATPAK_DATA_LABEL'), d.getVar('localstatedir'), d.getVar('FLATPAK_DATA_FSTAB_OPTIONS')) if d.getVar('FLATPAK_DEPLOY_MODE') == 'partition' else ''}"
-FLATPAK_SEED = "${datadir}/vfpk/seed.tar"
+# A user seed has a name of its own: vfpk-seed.service unpacks seed.tar into
+# the system installation, and so leaves it alone.
+FLATPAK_SEED = "${datadir}/vfpk/${@'user-' if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' else ''}seed.tar"
 
 # Guest timeout in seconds; empty derives it from the size of the content.
 FLATPAK_INSTALL_TIMEOUT ??= ""
@@ -388,23 +390,54 @@ def flatpak_user_seed_unit(d):
         '[Unit]\n',
         'Description=Seed Flatpak apps for %s\n' % user,
         'RequiresMountsFor=%s\n' % home,
-        # Only this account's session needs the installation; the rest of
-        # the boot does not wait for the unpack.
-        'Before=systemd-user-sessions.service user@%d.service\n' % uid,
+        # Only this account's session needs the installation, so only its
+        # logins wait for the unpack.
+        'Before=user@%d.service\n' % uid,
         'ConditionPathExists=%s\n' % d.getVar('FLATPAK_SEED'),
         'ConditionPathExists=!%s/.vfpk-seeded\n' % directory,
         '\n[Service]\n',
         'Type=oneshot\nRemainAfterExit=yes\n',
         'User=%s\n' % user,
         'Environment=HOME=%s\n' % home,
+        'Environment=VFPK_SEED=%s\n' % d.getVar('FLATPAK_SEED'),
         'Environment=VFPK_SEED_DIR=%s\n' % directory,
-        # Without a system repo, unprivileged commands that cover every
-        # installation fail. Let flatpak create it as root, applying
-        # remotes.d as it does so.
-        'ExecStartPre=+%s/flatpak remotes --system\n' % d.getVar('bindir'),
         'ExecStart=%s/vfpk-seed\n' % d.getVar('libexecdir'),
         '\n[Install]\nWantedBy=multi-user.target\n',
     ])
+
+def flatpak_system_repo_unit(d):
+    """Create the system installation beside a user installation, on every
+    boot it is missing: a volatile /var starts empty again after a reboot."""
+    installation = d.getVar('localstatedir') + '/lib/flatpak'
+    return ''.join([
+        '[Unit]\n',
+        'Description=Create the system flatpak installation\n',
+        'RequiresMountsFor=%s\n' % installation,
+        'Before=systemd-user-sessions.service\n',
+        'ConditionPathExists=!%s/repo\n' % installation,
+        '\n[Service]\n',
+        'Type=oneshot\nRemainAfterExit=yes\n',
+        # Without a system repo, unprivileged commands that cover every
+        # installation fail. flatpak creates it and applies remotes.d.
+        'ExecStart=%s/flatpak remotes --system\n' % d.getVar('bindir'),
+        '\n[Install]\nWantedBy=multi-user.target\n',
+    ])
+
+def flatpak_install_unit(d, name, text, wanted_by):
+    """Write a generated unit into the rootfs and enable it for WANTED_BY."""
+    rootfs = d.getVar('IMAGE_ROOTFS')
+    unitdir = d.getVar('systemd_system_unitdir')
+    bb.utils.mkdirhier(rootfs + unitdir)
+    path = os.path.join(rootfs + unitdir, name)
+    with open(path, 'w') as f:
+        f.write(text)
+    os.chmod(path, 0o644)
+    wants = os.path.join(rootfs + d.getVar('sysconfdir'), 'systemd', 'system', wanted_by + '.wants')
+    bb.utils.mkdirhier(wants)
+    link = os.path.join(wants, name)
+    if os.path.lexists(link):
+        os.unlink(link)
+    os.symlink(os.path.join(unitdir, name), link)
 
 # Runs last among the rootfs post-processing steps, so users created by
 # them (extrausers, for one) exist when the unit's user is checked.
@@ -416,17 +449,12 @@ python flatpak_autostart_units () {
     with open(d.getVar('FLATPAK_AUTOSTART')) as f:
         autostart = json.load(f)
 
+    # The package's own vfpk-seed.service finds no system seed and does
+    # nothing; these units are separate rather than edits to it.
     if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user':
-        unitdir = d.getVar('systemd_system_unitdir')
-        with open(rootfs + unitdir + '/vfpk-seed.service', 'w') as f:
-            f.write(flatpak_user_seed_unit(d))
-        # The package enabled the system unit under sysinit.target.
-        etc = os.path.join(rootfs + d.getVar('sysconfdir'), 'systemd', 'system')
-        bb.utils.remove(os.path.join(etc, 'sysinit.target.wants', 'vfpk-seed.service'))
-        bb.utils.mkdirhier(os.path.join(etc, 'multi-user.target.wants'))
-        link = os.path.join(etc, 'multi-user.target.wants', 'vfpk-seed.service')
-        if not os.path.lexists(link):
-            os.symlink(unitdir + '/vfpk-seed.service', link)
+        flatpak_install_unit(d, 'vfpk-seed-user.service', flatpak_user_seed_unit(d), 'multi-user.target')
+        flatpak_install_unit(d, 'vfpk-system-repo.service', flatpak_system_repo_unit(d), 'multi-user.target')
+    seed_unit = 'vfpk-seed-user.service' if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' else 'vfpk-seed.service'
 
     for pn, apps in sorted(autostart.items()):
         custom = d.getVarFlag('FLATPAK_SERVICE_FILE', pn)
@@ -449,7 +477,7 @@ python flatpak_autostart_units () {
                     'Description=Flatpak app %s\n' % app,
                     'After=network.target\n',
                     'Requires=user@%d.service\nAfter=user@%d.service\n' % (uid, uid),
-                    'Requires=vfpk-seed.service\nAfter=vfpk-seed.service\n' if d.getVar('FLATPAK_DEPLOY_MODE') == 'seed' else '',
+                    'Requires=%s\nAfter=%s\n' % (seed_unit, seed_unit) if d.getVar('FLATPAK_DEPLOY_MODE') == 'seed' else '',
                     '\n',
                     '[Service]\n',
                     'User=%s\n' % user,
