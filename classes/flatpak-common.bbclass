@@ -145,19 +145,36 @@ def flatpak_license_names(d, expression):
 #   rootfs    - unpacked into ${IMAGE_ROOTFS}/var/lib/flatpak. Only valid when
 #               the rootfs is writable at runtime.
 #   partition - an ext4 image in DEPLOY_DIR_IMAGE that wic places as the
-#               partition mounted at /var/lib/flatpak.
+#               last partition, carrying /var/lib/flatpak and /home and
+#               grown to the end of the disk on first boot.
 #   seed      - a tar in the rootfs that a first-boot service unpacks into
 #               the writable /var/lib/flatpak.
 # A read-only rootfs cannot hold an installation that 'flatpak update' can
 # write to, so it defaults to partition.
+# User installations go into the account's home: seeded on first boot by
+# default, or on the data partition. Keep the build guest's storage path
+# independent of that account's UID/home.
+FLATPAK_INSTALL_SCOPE ??= "system"
+FLATPAK_INSTALL_USER ??= "${FLATPAK_APP_USER}"
 FLATPAK_DEPLOY_MODES = "rootfs partition seed"
-FLATPAK_DEPLOY_MODE ??= "${@bb.utils.contains('IMAGE_FEATURES', 'read-only-rootfs', 'partition', 'rootfs', d)}"
+FLATPAK_DEPLOY_MODE ??= "${@'seed' if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' else bb.utils.contains('IMAGE_FEATURES', 'read-only-rootfs', 'partition', 'rootfs', d)}"
 
 python () {
     if not bb.data.inherits_class('image', d):
         return
 
     mode = d.getVar('FLATPAK_DEPLOY_MODE')
+    scope = d.getVar('FLATPAK_INSTALL_SCOPE')
+    if scope not in ('system', 'user'):
+        bb.fatal("FLATPAK_INSTALL_SCOPE must be 'system' or 'user'")
+    if scope == 'user':
+        import re
+        user = d.getVar('FLATPAK_INSTALL_USER') or ''
+        if not re.fullmatch(r'[a-z_][a-z0-9_-]*', user) or user == 'root':
+            bb.fatal("FLATPAK_INSTALL_SCOPE = 'user' needs a non-root FLATPAK_INSTALL_USER")
+        if mode not in ('seed', 'partition'):
+            bb.fatal("FLATPAK_INSTALL_SCOPE = 'user' needs FLATPAK_DEPLOY_MODE 'seed' or 'partition'; "
+                     "the user's home must be writable and persistent")
     modes = (d.getVar('FLATPAK_DEPLOY_MODES') or '').split()
     if mode not in modes:
         bb.fatal("FLATPAK_DEPLOY_MODE is '%s'; it must be one of: %s" % (mode, ' '.join(modes)))

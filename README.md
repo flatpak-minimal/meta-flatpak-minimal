@@ -15,6 +15,7 @@ packages.
 | `flatpak-minimal-appstream-dart-flathub-catalog` | [appstream_dart](https://github.com/flatpak-minimal/appstream_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-remotes` | (this layer) | System flatpak remotes as static `/etc/flatpak/remotes.d` entries. Flathub by default. |
 | `vfpk-seed` | (this layer) | First-boot unpacker for `FLATPAK_DEPLOY_MODE = "seed"`; added by `flatpak-cross-install`. |
+| `vfpk-growpart` | (this layer) | First-boot growth of the data partition for `FLATPAK_DEPLOY_MODE = "partition"`; added by `flatpak-cross-install`. |
 | `flatpak-minimal-image` | (this layer) | Reference image: flatpak plus `flatpak-remotes`; installs `BUNDLED_FLATPAKS` at build time. |
 
 The two Flutter recipes live under `dynamic-layers/flutter-layer/` and only
@@ -80,7 +81,7 @@ deploy mode:
 | `FLATPAK_DEPLOY_MODE` | Where the installation goes |
 | --- | --- |
 | `rootfs` | Unpacked into the rootfs. Default for a writable rootfs; refused with `read-only-rootfs`. |
-| `partition` | An ext4 image placed by wic as the partition mounted at `/var/lib/flatpak`. Default with `read-only-rootfs`. |
+| `partition` | An ext4 image placed by wic as the last partition, carrying `/var/lib/flatpak` and `/home`, grown to the end of the disk on first boot. Default with `read-only-rootfs`. |
 | `seed` | A tar in the rootfs, unpacked into the writable `/var/lib/flatpak` on first boot. |
 
 ### The guest
@@ -221,7 +222,7 @@ Options follow the package name, separated by colons:
 
 | Option | Effect |
 | --- | --- |
-| `autostart` | Generate and enable `flatpak-app-<ID>.service` for each app in the package. It runs `flatpak run --system <ID>` as `FLATPAK_APP_USER` (required; `FLATPAK_APP_USER[pn]` overrides it), with the `KEY=VALUE` pairs of `FLATPAK_APP_ENV`. `FLATPAK_SERVICE_FILE[pn]`, an absolute path, replaces the generated unit. Needs systemd. |
+| `autostart` | Generate and enable `flatpak-app-<ID>.service` for each app in the package. It runs `flatpak run --<scope> <ID>` as `FLATPAK_APP_USER` (required for system scope; user scope defaults to the install account; `FLATPAK_APP_USER[pn]` overrides it), with the `KEY=VALUE` pairs of `FLATPAK_APP_ENV`. `FLATPAK_SERVICE_FILE[pn]`, an absolute path, replaces the generated unit. Needs systemd. |
 | `external` | Do not add the package to `IMAGE_INSTALL`; it reaches the image some other way. |
 
 The image needs `vfpk-<arch>` for its architecture in `BBMULTICONFIG`; an
@@ -246,21 +247,65 @@ needs `/var/lib/flatpak` on writable storage. With `read-only-rootfs` in
 - The installation is built as an ext4 image, deployed as
   `<image>-<machine>.rootfs.vfpk-data.ext4` (`FLATPAK_DATA_IMAGE`), labeled
   `flatpak` (`FLATPAK_DATA_LABEL`), with `FLATPAK_DATA_EXTRA_SPACE` MB
-  (default 1024) of room for updates, or a fixed `FLATPAK_DATA_SIZE` MB. The
-  same input gives the same image: its UUID, hash seed and timestamps are
-  fixed.
-- The rootfs keeps an empty `/var/lib/flatpak` and an fstab entry mounting
-  the labeled filesystem there. The entry is ordered after `volatile-binds`,
-  which otherwise mounts a RAM copy of `/var/lib` over the partition and
-  silently discards updates.
-- Place the image with wic, from a `.wks.in`:
+  (default 1024) of room for updates, or `FLATPAK_DATA_SIZE` MB; growing it
+  on the device (below) gives it the rest of the disk. The same input gives
+  the same image: its UUID, hash seed and timestamps are fixed.
+- The partition carries every directory in `FLATPAK_DATA_DIRS` (default
+  `/var/lib/flatpak /home`), each in a subdirectory of the same name. It is
+  mounted at `FLATPAK_DATA_MOUNT` (default `/var/lib/vfpk-data`), and each
+  directory is bind-mounted from it; the rootfs keeps them empty as mount
+  points. The rootfs's `/home` moves onto the partition with its owners, so
+  user installations and app data (`~/.var/app`) live there too. The move
+  runs last in `ROOTFS_POSTPROCESS_COMMAND`, and the build fails if anything
+  writes to these directories after it, since the mounts would hide it.
+- `/home` belongs to the device from then on. oe-core's `ROOT_HOME` is
+  `/home/root`, so root's home is on the partition as well, and missing in a
+  rescue shell where the partition is not mounted. An OS update that adds a
+  user does not add its home to a partition already on the device: create
+  it on first boot (systemd-tmpfiles, or `CreateHome` in the user's unit).
+  Directories that the rootfs owns belong outside `FLATPAK_DATA_DIRS`.
+- The directories are found by label: a second disk carrying a partition
+  labeled `flatpak`, such as a USB stick flashed with the same image, can be
+  mounted (and grown) in its place.
+- The fstab entry is ordered after `volatile-binds`, which otherwise mounts a
+  RAM copy of `/var/lib` over the partition and silently discards updates.
+- Place the image with wic as the **last** partition. On any machine, keep
+  its own layout and add the partition after it:
 
   ```
-  part /var/lib/flatpak --source rawcopy --fstype=ext4 --no-fstab-update --sourceparams="file=${FLATPAK_DATA_IMAGE}" --label flatpak
+  WKS_FILE:pn-<image> = "flatpak-data.wks.in"
+  FLATPAK_DATA_BASE_WKS:pn-<image> = "sdimage-raspberrypi.wks"
   ```
 
-  or with whatever lays out the product's storage. An OS update rewrites the
-  rootfs and leaves the partition, and the apps updated on it, alone.
+  `FLATPAK_DATA_BASE_WKS` is the layout the machine used before, the
+  `WKS_FILE` its BSP sets (`sdimage-raspberrypi.wks` on meta-raspberrypi);
+  `.wks.in` templates work too. `flatpak-data.wks.in` is that layout with
+  `${FLATPAK_DATA_WKS_PART}`, the `part` line for the data image, added
+  last. The class writes the fstab entries, so the line has no mount point
+  or `--ondisk`. A layout of your own can add that line itself instead. An
+  OS update rewrites the rootfs and leaves the partition, and the apps
+  updated on it, alone.
+
+#### Growing the data partition
+
+The image ships the data partition no larger than its content plus
+`FLATPAK_DATA_EXTRA_SPACE`; apps get the rest of the device on first boot,
+as Android's `userdata` partition does. With `FLATPAK_DATA_GROW = "1"` (the
+default with systemd):
+
+- `vfpk-growpart.service` runs before the partition is checked and mounted.
+  If it is the last partition on its disk and space follows it, it extends
+  the partition to the end of the disk with `sfdisk`, moving the backup GPT
+  first on a GPT disk, and tells the kernel the new size with `resizepart`.
+  MBR (up to 2 TiB) and GPT both work. Once the partition reaches the end it
+  writes nothing, so later boots cost nothing.
+- The mount carries `x-systemd.growfs`, so `systemd-growfs` then grows the
+  ext4 filesystem online.
+
+This adds about 335 kB to the rootfs on aarch64: `vfpk-growpart` (3 kB),
+util-linux's `sfdisk` (199 kB) and `resizepart` (133 kB), plus `libfdisk`
+and `libsmartcols` (922 kB) on an image without them. Set
+`FLATPAK_DATA_GROW = "0"` to keep the partition at its built size.
 
 `seed` puts the installation in the rootfs as a tar
 (`/usr/share/vfpk/seed.tar`), and `vfpk-seed.service` unpacks it into
@@ -272,6 +317,49 @@ On a read-only rootfs, mount persistent storage at `/var/lib/flatpak` with
 flatpak lets an unprivileged user update system apps through polkit when
 the user has an active local session (a desktop or kiosk session on a seat).
 Anything else, such as a background updater, needs a polkit rule.
+
+### Per-user installations
+
+System scope is the default. For a user installation, set:
+
+```bitbake
+FLATPAK_INSTALL_SCOPE:pn-agl-ivi-demo-flutter = "user"
+FLATPAK_INSTALL_USER:pn-agl-ivi-demo-flutter = "agl-driver"
+FLATPAK_DEPLOY_MODE:pn-agl-ivi-demo-flutter = "seed"
+```
+
+or, with the data partition, `FLATPAK_DEPLOY_MODE = "partition"`: the
+installation is then built straight into `~/.local/share/flatpak` on the
+partition, owned by the account, and nothing is unpacked on first boot.
+
+The build installs apps, runtimes and remotes offline. With `seed`, they go
+into a seed of their own (`/usr/share/vfpk/user-seed.tar`), and on first
+boot `vfpk-seed-user.service` extracts it as that user into
+`~/.local/share/flatpak`. That account's logins wait for it; other logins and
+the rest of the boot do not, though with large runtimes in the seed the
+account's first login can take a while on slow storage.
+`vfpk-system-repo.service` creates an empty system installation on every
+boot it is missing, as it is after each reboot on a volatile `/var`. flatpak
+needs it before unprivileged commands that cover every installation, such as
+`flatpak list`, can run. User scope requires `seed` or `partition`; the
+account must exist and its home must be writable and persistent (with
+`partition`, under a directory in `FLATPAK_DATA_DIRS`). Existing
+installations are preserved; system installations are not migrated. Custom
+data-directory locations are unsupported.
+
+A user installation is owned by its account: anything running as that
+account can install, update, remove or modify its apps and runtimes. That is
+what lets it update without root; use system scope where apps must not be
+changeable by the account that runs them.
+
+Run `flatpak list --user`, `flatpak update --user` and `flatpak run --user <ID>`
+as the install account. `:autostart` uses that account by default; an explicit
+`FLATPAK_APP_USER` must match it. Custom service units must use the same account,
+wait for `vfpk-seed-user.service` and launch with `--user`.
+
+Both scopes can use first-boot seeding or the data partition, which needs
+no extraction. System scope also supports `rootfs`. Always launch as the session owner;
+root using another user's runtime directory can leave root-owned temporary files.
 
 ### Flatpak content built by this build
 
@@ -540,9 +628,19 @@ bitbake flatpak-minimal-image -c testimage
 The `flatpak` test suite (`lib/oeqa/runtime/cases/flatpak.py`) checks that
 every ref in `/usr/share/vfpk/installed.refs` is deployed at its commit under
 its origin, that the origins are configured remotes, that `flatpak repair`
-is clean and that the test app runs in its sandbox. CI runs it on all four
-machines. The include lets root log in without a password; it is for tests
-only.
+is clean and that the test app runs in its sandbox. On an image with a data
+partition it also checks the mounts, the owner of a user installation, and,
+on a disk larger than the image, that the partition grew to its end. CI runs
+it on all four machines. The include lets root log in without a password; it
+is for tests only.
+
+`oe-selftest -r flatpak_data` checks the data partition settings at parse
+time, without building an image.
+
+`conf/include/vfpk-testimage-user.inc` puts the same content in a user
+installation instead, seeded into the home of a test account (`vfpktest`) on
+first boot. The suite then runs as that account and also checks that it can
+list every installation. CI runs it on qemux86-64.
 
 ## Remotes
 

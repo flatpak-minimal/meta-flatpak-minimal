@@ -1,0 +1,11 @@
+# short-description: The machine's layout with the flatpak data partition last
+# long-description: Any machine's own wic layout, named by
+# FLATPAK_DATA_BASE_WKS, followed by the flatpak data partition
+# (FLATPAK_DEPLOY_MODE = "partition") as its last partition, so
+# vfpk-growpart can extend it to the end of the disk on first boot.
+#
+#   WKS_FILE:pn-<image> = "flatpak-data.wks.in"
+#   FLATPAK_DATA_BASE_WKS:pn-<image> = "sdimage-raspberrypi.wks"
+
+${@flatpak_data_base_wks(d)}
+${FLATPAK_DATA_WKS_PART}
