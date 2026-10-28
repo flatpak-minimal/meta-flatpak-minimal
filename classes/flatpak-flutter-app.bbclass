@@ -48,9 +48,13 @@ FLATPAK_FLUTTER_RUNTIME_MODE ??= "release"
 FLATPAK_FLUTTER_BUNDLE = "${FLUTTER_INSTALL_DIR}/${@get_flutter_sdk_version(d)}/${FLATPAK_FLUTTER_RUNTIME_MODE}"
 FLATPAK_FLUTTER_ENGINE_DIR = "flutter"
 FLATPAK_FLUTTER_EMBEDDER ??= "/app/${FLATPAK_FLUTTER_HOMESCREEN_DIR}/bin/homescreen"
+# The homescreen embedder's options; another FLATPAK_FLUTTER_EMBEDDER needs
+# its own. --app-id makes the compositor see the app's ID, not the
+# embedder's default.
+FLATPAK_FLUTTER_EMBEDDER_ARGS ??= "--app-id ${FLATPAK_APP_ID}"
 
 FLATPAK_APP_FILES ??= "${FLATPAK_FLUTTER_BUNDLE}"
-FLATPAK_APP_COMMAND ??= "${FLATPAK_FLUTTER_EMBEDDER} -b ${FLATPAK_FLUTTER_BUNDLE}"
+FLATPAK_APP_COMMAND ??= "${FLATPAK_FLUTTER_EMBEDDER} ${FLATPAK_FLUTTER_EMBEDDER_ARGS} -b ${FLATPAK_FLUTTER_BUNDLE}"
 # flutter-app-native installs native-assets libraries here; dlopen finds them
 # by name through the linker search path.
 FLATPAK_APP_LIBDIRS ??= "${FLATPAK_FLUTTER_BUNDLE}/lib/native_assets"
