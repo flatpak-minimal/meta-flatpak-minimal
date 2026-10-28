@@ -257,6 +257,62 @@ jobs:
           bitbake --runall=fetch "$APP"
           BB_NO_NETWORK=1 bitbake "$APP"
 
+      # The developer repository for this machine's flatpak arch: the
+      # Platform and SDK from the arch's generic multiconfig, indexed into
+      # repo-dev as developers get it. Releases and dispatched runs sign it
+      # with the armored, passphrase-less secret key in FLATPAK_SDK_GPG_KEY;
+      # pull requests never see the key and build it unsigned. Publishing it
+      # to a host comes later; for now it is a workflow artifact. Its
+      # settings go in a file passed with -R, not local.conf, so the steps
+      # after it build what they would without it.
+      - name: Build the developer repository
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ../wrynose-linux-dummy
+        env:
+          GPG_KEY: ${{ github.event_name != 'pull_request' && secrets.FLATPAK_SDK_GPG_KEY || '' }}
+        run: |
+          . ./openembedded-core/oe-init-build-env
+          case "${{ env.MACHINE }}" in
+              qemuarm64) mc=vfpk-aarch64 ;;
+              qemux86-64) mc=vfpk-x86-64 ;;
+              qemuriscv64) mc=vfpk-riscv64 ;;
+              qemuarm) mc=vfpk-arm ;;
+              *) echo "::error::no vfpk multiconfig for ${{ env.MACHINE }}"; exit 1 ;;
+          esac
+          conf=$(mktemp "$RUNNER_TEMP/repo-dev.XXXXXX.conf")
+          trap 'rm -f "$conf"' EXIT
+          echo "BBMULTICONFIG = \"$mc $mc-generic\"" >> "$conf"
+          echo "FLATPAK_PUBLISH_PACKAGE_ARCHS:pn-flatpak-repo-index-dev = \"$mc-generic\"" >> "$conf"
+          if [ -n "$GPG_KEY" ]; then
+              # Outside the build tree, which the next run, a pull request's
+              # among them, finds on this persistent runner.
+              export GNUPGHOME=$(mktemp -d "$RUNNER_TEMP/gnupg.XXXXXX")
+              trap 'gpgconf --kill all; rm -rf "$GNUPGHOME" "$conf"' EXIT
+              printf '%s\n' "$GPG_KEY" | gpg --batch --import
+              id=$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1 == "fpr" {print $10; exit}')
+              if [ -z "$id" ]; then
+                  echo "::error::FLATPAK_SDK_GPG_KEY holds no secret key"
+                  exit 1
+              fi
+              # flatpak verifies each commit as well as the summary, so the
+              # producers sign with it too.
+              echo "FLATPAK_GPGID = \"$id\"" >> "$conf"
+              echo "FLATPAK_GPGHOME = \"$GNUPGHOME\"" >> "$conf"
+          fi
+          bitbake -R "$conf" "mc:$mc-generic:flatpak-platform-runtime-image" "mc:$mc-generic:flatpak-platform-sdk-image"
+          bitbake -R "$conf" flatpak-repo-index-dev
+          deploy=$(bitbake-getvar -r flatpak-repo-index-dev --value FLATPAK_DEPLOY_DIR)
+          tar -C "$deploy" -cf "$GITHUB_WORKSPACE/repo-dev-${{ env.MACHINE }}.tar" repo-dev
+
+      - name: Upload the developer repository
+        if: ${{ !cancelled() && hashFiles(format('repo-dev-{0}.tar', matrix.machine)) != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-dev-${{ matrix.machine }}
+          path: repo-dev-${{ matrix.machine }}.tar
+          retention-days: 7
+
       # flatpak-minimal-image with the vfpk test runtime and app installed at
       # build time, booted under testimage. Its configuration is appended
       # here, last, so every step above builds exactly what meta-flutter's CI
