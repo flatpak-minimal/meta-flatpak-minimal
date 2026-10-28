@@ -8,7 +8,9 @@ DESCRIPTION = "vfpk-seed.service unpacks the flatpak installation that \
                flatpak-cross-install seeded at build time \
                (FLATPAK_DEPLOY_MODE = \"seed\") into the writable \
                /var/lib/flatpak on first boot, and never over an existing \
-               installation."
+               installation. For user scope, flatpak-cross-install adds \
+               vfpk-seed-user.service, which runs it as the configured \
+               account to seed its home."
 HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 SECTION = "base"
 
