@@ -1,0 +1,105 @@
+From dbfb4429af7c07a1f5d5e9507e9dae629e5cc542 Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Sat, 14 Nov 2026 04:54:28 -0800
+Subject: [PATCH] Fix glz::Reader narrowing the wire lengths on a 32-bit host
+
+Lengths are 64-bit on the wire. A 32-bit build of the flutter_remote_manager
+native library does not compile:
+
+  glaze_meta.h:280:63: error: non-constant-expression cannot be narrowed
+  from type 'unsigned long long' to 'size_type' (aka 'unsigned int') in
+  initializer list [-Wc++11-narrowing]
+      std::string_view sv{reinterpret_cast<const char*>(p), n};
+
+read_string_view is the one that stops the build, but read_span has the
+same braced init and errors as soon as it is instantiated, and read_string
+and read_vector narrow quietly through a parenthesized init and reserve.
+
+The bounds checks did not help, because p + n converts n to ptrdiff_t
+before the comparison: a length over 2^32 truncated and the check passed.
+take() compares in 64-bit first and returns size_t, so nothing downstream
+can narrow. read_span compares in elements, since count * sizeof(T) would
+overflow first, and read_vector reserves no more than the bytes left.
+
+No change on a 64-bit host, where size_t already holds the wire type.
+
+Upstream-Status: Backport [https://github.com/flatpak-minimal/flatpak_dart/commit/dbfb4429af7c07a1f5d5e9507e9dae629e5cc542]
+
+Signed-off-by: Joel Winarske <joel.winarske@linux.com>
+---
+ native/include/glaze_meta.h | 32 ++++++++++++++++++++++----------
+ 1 file changed, 22 insertions(+), 10 deletions(-)
+
+diff --git a/native/include/glaze_meta.h b/native/include/glaze_meta.h
+index 6dcd91e..04d3e70 100644
+--- a/native/include/glaze_meta.h
++++ b/native/include/glaze_meta.h
+@@ -243,6 +243,16 @@ class Reader {
+         return p + n <= end;
+     }
+ 
++    // Lengths are 64-bit on the wire so the format does not depend on the
++    // host, which means a 32-bit reader has to range check before it narrows.
++    // Checking in the pointer arithmetic does not do it: p + n converts n to
++    // ptrdiff_t first, so a length over 2^32 truncates and the check passes.
++    [[nodiscard]] std::size_t take(uint64_t n, const char* what) const {
++        if (n > static_cast<uint64_t>(end - p))
++            throw std::out_of_range(std::string("glz::Reader: ") + what + " length exceeds buffer");
++        return static_cast<std::size_t>(n);
++    }
++
+     // ── Primitive readers ─────────────────────────────────────────────────
+ 
+     template <typename T>
+@@ -264,9 +274,7 @@ class Reader {
+     }
+ 
+     [[nodiscard]] std::string read_string() {
+-        auto n = read<uint64_t>();
+-        if (p + n > end)
+-            throw std::out_of_range("glz::Reader: string length exceeds buffer");
++        const auto n = take(read<uint64_t>(), "string");
+         std::string s(reinterpret_cast<const char*>(p), n);
+         p += n;
+         return s;
+@@ -274,9 +282,7 @@ class Reader {
+ 
+     // Zero-copy string view — valid only as long as the source buffer lives.
+     [[nodiscard]] std::string_view read_string_view() {
+-        auto n = read<uint64_t>();
+-        if (p + n > end)
+-            throw std::out_of_range("glz::Reader: string_view length exceeds buffer");
++        const auto n = take(read<uint64_t>(), "string_view");
+         std::string_view sv{reinterpret_cast<const char*>(p), n};
+         p += n;
+         return sv;
+@@ -286,9 +292,11 @@ class Reader {
+     template <typename T>
+         requires std::is_arithmetic_v<T>
+     [[nodiscard]] std::span<const T> read_span() {
+-        auto n = read<uint64_t>();
+-        if (p + n * sizeof(T) > end)
++        const uint64_t count = read<uint64_t>();
++        // In elements, not bytes: count * sizeof(T) would overflow first.
++        if (count > static_cast<uint64_t>(end - p) / sizeof(T))
+             throw std::out_of_range("glz::Reader: span length exceeds buffer");
++        const auto n = static_cast<std::size_t>(count);
+         auto sp = std::span<const T>{reinterpret_cast<const T*>(p), n};
+         p += n * sizeof(T);
+         return sp;
+@@ -308,9 +316,13 @@ class Reader {
+ 
+     template <typename T>
+     [[nodiscard]] std::vector<T> read_vector() {
+-        auto n = read<uint64_t>();
++        const uint64_t n = read<uint64_t>();
+         std::vector<T> v;
+-        v.reserve(n);
++        // Every element costs at least a byte, so the bytes left bound the
++        // count. Reserving n outright trusts a length the buffer could never
++        // supply, and narrows it on a 32-bit host. The loop is unchanged and
++        // each element read still bounds checks.
++        v.reserve(static_cast<std::size_t>(std::min<uint64_t>(n, static_cast<uint64_t>(end - p))));
+         for (uint64_t i = 0; i < n; ++i) v.push_back(read_value<T>());
+         return v;
+     }
