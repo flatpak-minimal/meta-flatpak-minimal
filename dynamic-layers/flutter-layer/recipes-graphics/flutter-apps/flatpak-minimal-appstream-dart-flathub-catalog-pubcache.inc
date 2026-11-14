@@ -5,7 +5,7 @@
 # PUB_CACHE at it and runs `pub get --offline --enforce-lockfile`.
 
 PUB_CACHE_LOCAL ?= "pub_cache"
-PUBSPEC_LOCK_SHA256 = "84edb5e81f591f8af2f6d71fd113ca327d5fa67f74a5567b1d637113bb58156b"
+PUBSPEC_LOCK_SHA256 = "a74ff1f573ee6362b270fde6c09a3158f329d97d5dafa0286db9285842cb2f25"
 
 # Hosted packages
 SRC_URI:append = " https://pub.dev/api/archives/args-2.7.0.tar.gz;name=args;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/args-2.7.0;downloadfilename=pub-cache/args-2.7.0.tar.gz"
@@ -68,6 +68,8 @@ SRC_URI:append = " https://pub.dev/api/archives/leak_tracker_testing-3.0.2.tar.g
 SRC_URI[leak_tracker_testing.sha256sum] = "8d5a2d49f4a66b49744b23b018848400d23e54caf9463f4eb20df3eb8acb2eb1"
 SRC_URI:append = " https://pub.dev/api/archives/lints-6.1.0.tar.gz;name=lints;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/lints-6.1.0;downloadfilename=pub-cache/lints-6.1.0.tar.gz"
 SRC_URI[lints.sha256sum] = "12f842a479589fea194fe5c5a3095abc7be0c1f2ddfa9a0e76aed1dbd26a87df"
+SRC_URI:append = " https://pub.dev/api/archives/listen-1.0.1.tar.gz;name=listen;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/listen-1.0.1;downloadfilename=pub-cache/listen-1.0.1.tar.gz"
+SRC_URI[listen.sha256sum] = "47501a08016a43fcad79252439d723f50f14f88fa7bfd8a177e0a417e5c9e1f2"
 SRC_URI:append = " https://pub.dev/api/archives/logging-1.3.0.tar.gz;name=logging;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/logging-1.3.0;downloadfilename=pub-cache/logging-1.3.0.tar.gz"
 SRC_URI[logging.sha256sum] = "c8245ada5f1717ed44271ed1c26b8ce85ca3228fd2ffdb75468ab01979309d61"
 SRC_URI:append = " https://pub.dev/api/archives/matcher-0.12.20.tar.gz;name=matcher;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/matcher-0.12.20;downloadfilename=pub-cache/matcher-0.12.20.tar.gz"
@@ -132,8 +134,8 @@ SRC_URI:append = " https://pub.dev/api/archives/synchronized-3.4.1+2.tar.gz;name
 SRC_URI[synchronized.sha256sum] = "3a7b5d17422dd0f8d5c6c14feaa5a1c65638b9455f871a96f08437562c046931"
 SRC_URI:append = " https://pub.dev/api/archives/term_glyph-1.2.2.tar.gz;name=term_glyph;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/term_glyph-1.2.2;downloadfilename=pub-cache/term_glyph-1.2.2.tar.gz"
 SRC_URI[term_glyph.sha256sum] = "7f554798625ea768a7518313e58f83891c7f5024f88e46e7182a4558850a4b8e"
-SRC_URI:append = " https://pub.dev/api/archives/test_api-0.7.12.tar.gz;name=test_api;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/test_api-0.7.12;downloadfilename=pub-cache/test_api-0.7.12.tar.gz"
-SRC_URI[test_api.sha256sum] = "2a122cbe059f8b610d3a5415f42e255b6c17b1f21eee1d960f31080237fb4f11"
+SRC_URI:append = " https://pub.dev/api/archives/test_api-0.7.14.tar.gz;name=test_api;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/test_api-0.7.14;downloadfilename=pub-cache/test_api-0.7.14.tar.gz"
+SRC_URI[test_api.sha256sum] = "0a10344e901e5b2e63819567951cb6a06673ed6b84f40462188ff5a0c41f371f"
 SRC_URI:append = " https://pub.dev/api/archives/typed_data-1.4.0.tar.gz;name=typed_data;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/typed_data-1.4.0;downloadfilename=pub-cache/typed_data-1.4.0.tar.gz"
 SRC_URI[typed_data.sha256sum] = "f9049c039ebfeb4cf7a7104a675823cd72dba8297f264b6637062516699fa006"
 SRC_URI:append = " https://pub.dev/api/archives/url_launcher-6.3.2.tar.gz;name=url_launcher;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/url_launcher-6.3.2;downloadfilename=pub-cache/url_launcher-6.3.2.tar.gz"
@@ -154,8 +156,8 @@ SRC_URI:append = " https://pub.dev/api/archives/url_launcher_windows-3.1.6.tar.g
 SRC_URI[url_launcher_windows.sha256sum] = "6c5ad3f22cd4c38e089b81963b3cd7bb83b111b2df5dce008bb066162f42e429"
 SRC_URI:append = " https://pub.dev/api/archives/uuid-4.6.0.tar.gz;name=uuid;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/uuid-4.6.0;downloadfilename=pub-cache/uuid-4.6.0.tar.gz"
 SRC_URI[uuid.sha256sum] = "9b129329f58692f6e6578329498a8fe9fbe98f090beb764ffbb8ee2eadd01dcd"
-SRC_URI:append = " https://pub.dev/api/archives/vector_math-2.4.2.tar.gz;name=vector_math;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/vector_math-2.4.2;downloadfilename=pub-cache/vector_math-2.4.2.tar.gz"
-SRC_URI[vector_math.sha256sum] = "f36f9f3be64c6198714492bb455c11056e33e2f85d9a0b676a48301e44fdcf47"
+SRC_URI:append = " https://pub.dev/api/archives/vector_math-2.4.4.tar.gz;name=vector_math;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/vector_math-2.4.4;downloadfilename=pub-cache/vector_math-2.4.4.tar.gz"
+SRC_URI[vector_math.sha256sum] = "fa49e1674cb84acb900141714e6c6e1f9ae099827c24d141430ff6819db4e1bc"
 SRC_URI:append = " https://pub.dev/api/archives/vm_service-15.3.0.tar.gz;name=vm_service;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/vm_service-15.3.0;downloadfilename=pub-cache/vm_service-15.3.0.tar.gz"
 SRC_URI[vm_service.sha256sum] = "5f37239c4851efcef929cea7824e76df7f2f0970aef85d66bbc430afa40e72f0"
 SRC_URI:append = " https://pub.dev/api/archives/web-1.1.1.tar.gz;name=web;subdir=${PUB_CACHE_LOCAL}/hosted/pub.dev/web-1.1.1;downloadfilename=pub-cache/web-1.1.1.tar.gz"
