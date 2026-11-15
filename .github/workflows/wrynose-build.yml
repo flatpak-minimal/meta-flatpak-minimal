@@ -280,6 +280,21 @@ jobs:
           bitbake flatpak-minimal-image
           bitbake flatpak-minimal-image -c testimage
 
+      # The same image with the test content in a test account's user
+      # installation. The scope changes the generated units, not anything
+      # arch-specific, so one machine runs it. See
+      # conf/include/vfpk-testimage-user.inc.
+      - name: Test flatpak-minimal-image with a user installation
+        if: ${{ !cancelled() && matrix.machine == 'qemux86-64' }}
+        shell: bash
+        working-directory: ../wrynose-linux-dummy
+        run: |
+          . ./openembedded-core/oe-init-build-env
+          sed -i 's|^require conf/include/vfpk-testimage.inc$|require conf/include/vfpk-testimage-user.inc|' ./conf/local.conf
+          grep -qx 'require conf/include/vfpk-testimage-user.inc' ./conf/local.conf
+          bitbake flatpak-minimal-image
+          bitbake flatpak-minimal-image -c testimage
+
       # Only reached when every step above succeeded; a failed or cancelled run
       # leaves the marker for the next one to act on.
       - name: Mark the build complete
