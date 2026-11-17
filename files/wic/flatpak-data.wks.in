@@ -1,0 +1,9 @@
+# short-description: The machine's layout with the flatpak data partition last
+# long-description: FLATPAK_DATA_BASE_WKS followed by the flatpak data
+# partition, last so systemd-repart can grow it.
+#
+#   WKS_FILE:pn-<image> = "flatpak-data.wks.in"
+#   FLATPAK_DATA_BASE_WKS:pn-<image> = "sdimage-raspberrypi.wks"
+
+${@flatpak_data_base_wks(d)}
+${FLATPAK_DATA_WKS_PART}

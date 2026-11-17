@@ -253,14 +253,36 @@ needs `/var/lib/flatpak` on writable storage. With `read-only-rootfs` in
   the labeled filesystem there. The entry is ordered after `volatile-binds`,
   which otherwise mounts a RAM copy of `/var/lib` over the partition and
   silently discards updates.
-- Place the image with wic, from a `.wks.in`:
+- Place the partition last, after the machine's own layout:
 
   ```
-  part /var/lib/flatpak --source rawcopy --fstype=ext4 --no-fstab-update --sourceparams="file=${FLATPAK_DATA_IMAGE}" --label flatpak
+  WKS_FILE:pn-<image> = "flatpak-data.wks.in"
+  FLATPAK_DATA_BASE_WKS:pn-<image> = "sdimage-raspberrypi.wks"
   ```
 
-  or with whatever lays out the product's storage. An OS update rewrites the
-  rootfs and leaves the partition, and the apps updated on it, alone.
+  `FLATPAK_DATA_BASE_WKS` is the `WKS_FILE` the BSP sets. A layout of your
+  own can end with `${FLATPAK_DATA_WKS_PART}` instead, or use whatever lays
+  out the product's storage. An OS update rewrites the rootfs and leaves the
+  partition, and the apps updated on it, alone.
+
+#### Growing the data partition
+
+With `FLATPAK_DATA_GROW = "1"`, systemd-repart grows the data partition to
+the end of the disk on first boot, and `x-systemd.growfs` grows the
+filesystem. repart finds the partition by its GPT type
+(`FLATPAK_DATA_PART_TYPE`) and leaves the others alone. It is off by
+default, and needs:
+
+- A GPT disk. `flatpak-data.wks.in` adds `bootloader --ptable gpt` when the
+  base layout has no bootloader line, and parsing fails on an msdos layout.
+  The board must boot from GPT; the Raspberry Pi 4 and 5 do.
+- The data partition on the same disk as `/`.
+- systemd built with repart. On aarch64 this adds about 740 kB, plus
+  openssl if the image doesn't have it:
+
+  ```
+  PACKAGECONFIG:append:pn-systemd = " repart openssl"
+  ```
 
 `seed` puts the installation in the rootfs as a tar
 (`/usr/share/vfpk/seed.tar`), and `vfpk-seed.service` unpacks it into
@@ -589,6 +611,12 @@ only.
 installation instead, seeded into the home of a test account (`vfpktest`) on
 first boot. The suite then runs as that account and also checks that it can
 list every installation. CI runs it on qemux86-64.
+
+`conf/include/vfpk-testimage-partition.inc` puts it on a data partition
+with growing on, in a GPT image 1 GiB larger than its partitions, and the
+suite checks that the partition grew to the end of the disk. CI runs it on
+qemux86-64. `oe-selftest -r flatpak_data` checks the data partition
+settings at parse time.
 
 ## Remotes
 

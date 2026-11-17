@@ -295,6 +295,20 @@ jobs:
           bitbake flatpak-minimal-image
           bitbake flatpak-minimal-image -c testimage
 
+      # The same image with the test content on a data partition that
+      # systemd-repart grows on first boot. See
+      # conf/include/vfpk-testimage-partition.inc.
+      - name: Test flatpak-minimal-image with a growing data partition
+        if: ${{ !cancelled() && matrix.machine == 'qemux86-64' }}
+        shell: bash
+        working-directory: ../wrynose-linux-dummy
+        run: |
+          . ./openembedded-core/oe-init-build-env
+          sed -i 's|^require conf/include/vfpk-testimage\(-user\)\?.inc$|require conf/include/vfpk-testimage-partition.inc|' ./conf/local.conf
+          grep -qx 'require conf/include/vfpk-testimage-partition.inc' ./conf/local.conf
+          bitbake flatpak-minimal-image
+          bitbake flatpak-minimal-image -c testimage
+
       # Only reached when every step above succeeded; a failed or cancelled run
       # leaves the marker for the next one to act on.
       - name: Mark the build complete

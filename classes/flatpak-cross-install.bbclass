@@ -42,11 +42,10 @@
 #   partition  an ext4 image deployed as ${IMAGE_LINK_NAME}.vfpk-data.ext4
 #              (FLATPAK_DATA_IMAGE), labeled FLATPAK_DATA_LABEL, with room
 #              for FLATPAK_DATA_EXTRA_SPACE MB of updates or a fixed
-#              FLATPAK_DATA_SIZE MB. Place it as the partition mounted at
-#              /var/lib/flatpak, e.g. from a .wks.in:
-#                part /var/lib/flatpak --source rawcopy --fstype=ext4 --no-fstab-update
-#                     --sourceparams="file=${FLATPAK_DATA_IMAGE}" --label flatpak
-#              It is built even without flatpak content, so the layout holds.
+#              FLATPAK_DATA_SIZE MB, mounted at /var/lib/flatpak. Place it
+#              last with flatpak-data.wks.in. With FLATPAK_DATA_GROW,
+#              systemd-repart grows it to the end of the disk on first
+#              boot. It is built even without flatpak content.
 #   seed       a tar at ${FLATPAK_SEED}, unpacked into the writable
 #              /var/lib/flatpak on first boot by vfpk-seed.service, which
 #              the class adds to the image. It never unpacks over an
@@ -75,6 +74,15 @@ FLATPAK_INSTALLED_SCOPE = "${datadir}/vfpk/installed.scope"
 
 FLATPAK_DATA_IMAGE = "${IMGDEPLOYDIR}/${IMAGE_NAME}.vfpk-data.ext4"
 FLATPAK_DATA_LABEL ??= "flatpak"
+# GPT type that systemd-repart matches. Our own, so it never matches root.
+FLATPAK_DATA_PART_TYPE ??= "E660927D-BA40-4163-B8FA-67D21924F4EB"
+# wic line for the data partition. No mount point or --ondisk: the class
+# writes the fstab entry. wic only sets --part-type on GPT.
+FLATPAK_DATA_WKS_PART ??= 'part --source rawcopy --sourceparams="file=${FLATPAK_DATA_IMAGE}" --fstype=ext4 --label ${FLATPAK_DATA_LABEL} --align 4096 --no-fstab-update${@' --part-type ' + d.getVar('FLATPAK_DATA_PART_TYPE') if d.getVar('FLATPAK_DATA_GROW') == '1' else ''}'
+# The machine's layout for flatpak-data.wks.in, named as WKS_FILE takes it.
+FLATPAK_DATA_BASE_WKS ??= ""
+# Grow the partition with systemd-repart; needs GPT and systemd with repart.
+FLATPAK_DATA_GROW ??= "0"
 FLATPAK_DATA_EXTRA_SPACE ??= "1024"
 FLATPAK_DATA_SIZE ??= ""
 # Empty derives a fixed UUID from the image name and machine.
@@ -84,7 +92,7 @@ FLATPAK_DATA_UUID ??= ""
 # partition ends up underneath, and flatpak writes to a copy in RAM that is
 # gone at the next boot, so mount it after. Ordering against a unit that does
 # not exist is a no-op.
-FLATPAK_DATA_FSTAB_OPTIONS ??= "defaults,x-systemd.after=var-volatile-lib.service"
+FLATPAK_DATA_FSTAB_OPTIONS ??= "defaults,x-systemd.after=var-volatile-lib.service${@',x-systemd.growfs' if d.getVar('FLATPAK_DATA_GROW') == '1' else ''}"
 FLATPAK_DATA_FSTAB ??= "${@'LABEL=%s %s/lib/flatpak ext4 %s 0 2' % (d.getVar('FLATPAK_DATA_LABEL'), d.getVar('localstatedir'), d.getVar('FLATPAK_DATA_FSTAB_OPTIONS')) if d.getVar('FLATPAK_DEPLOY_MODE') == 'partition' else ''}"
 # A user seed has a name of its own: vfpk-seed.service unpacks seed.tar into
 # the system installation, and so leaves it alone.
@@ -118,6 +126,14 @@ python () {
         if not bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d):
             bb.fatal("FLATPAK_DEPLOY_MODE = \"seed\" needs systemd in DISTRO_FEATURES for vfpk-seed.service")
         d.appendVar('IMAGE_INSTALL', ' vfpk-seed')
+    if mode == 'partition' and d.getVar('FLATPAK_DATA_GROW') == '1':
+        if not bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d):
+            bb.fatal("FLATPAK_DATA_GROW = \"1\" needs systemd in DISTRO_FEATURES for systemd-repart "
+                     "and systemd-growfs")
+        if not re.fullmatch(r'[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}',
+                            d.getVar('FLATPAK_DATA_PART_TYPE') or ''):
+            bb.fatal("FLATPAK_DATA_PART_TYPE '%s' is not a GPT type UUID" % d.getVar('FLATPAK_DATA_PART_TYPE'))
+        flatpak_data_check_ptable(d)
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,16}', d.getVar('FLATPAK_DATA_LABEL') or ''):
         bb.fatal("FLATPAK_DATA_LABEL '%s' is not an ext4 label (up to 16 of A-Z a-z 0-9 _ -)"
                  % d.getVar('FLATPAK_DATA_LABEL'))
@@ -152,12 +168,91 @@ ROOTFS_POSTPROCESS_COMMAND:append = " flatpak_autostart_units"
 
 do_rootfs[vardeps] += "BUNDLED_FLATPAKS FLATPAK_DEPLOY_MODE FLATPAK_INSTALL_SCOPE FLATPAK_INSTALL_USER FLATPAK_APP_USER FLATPAK_APP_ENV \
     FLATPAK_SERVICE_FILE FLATPAK_INSTALL_TIMEOUT FLATPAK_INSTALL_MEMORY FLATPAK_DATA_LABEL \
-    FLATPAK_DATA_EXTRA_SPACE FLATPAK_DATA_SIZE FLATPAK_DATA_UUID FLATPAK_DATA_FSTAB FLATPAK_SEED"
+    FLATPAK_DATA_EXTRA_SPACE FLATPAK_DATA_SIZE FLATPAK_DATA_UUID FLATPAK_DATA_FSTAB FLATPAK_SEED \
+    FLATPAK_DATA_GROW FLATPAK_DATA_PART_TYPE"
 # Tuning only; the result does not depend on it.
 flatpak_cross_install[vardepsexclude] += "FLATPAK_INSTALL_SMP"
 
 FLATPAK_NAME_RE = "[A-Za-z0-9][A-Za-z0-9._-]*"
 FLATPAK_REF_RE = "(app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_]+/[A-Za-z0-9._-]+"
+
+def flatpak_wks_body(d, path):
+    """A wic layout's text, with a .wks.in expanded."""
+    bb.parse.mark_dependency(d, path)
+    with open(path) as f:
+        body = f.read()
+    if path.endswith('.in'):
+        body = d.expand(body)
+    return body
+
+def flatpak_wks_ptable(d, path, seen=()):
+    """The --ptable of the layout's bootloader line, following includes,
+    or None if it has none (wic then uses msdos)."""
+    import shlex
+    if path in seen:
+        return None
+    for line in flatpak_wks_body(d, path).splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        try:
+            args = shlex.split(line)
+        except ValueError:
+            continue
+        if args[0] == 'include' and len(args) > 1:
+            inc = os.path.join(os.path.dirname(os.path.abspath(path)), args[1])
+            if os.path.exists(inc):
+                ptable = flatpak_wks_ptable(d, inc, seen + (path,))
+                if ptable:
+                    return ptable
+        elif args[0] == 'bootloader':
+            for i, arg in enumerate(args):
+                if arg == '--ptable' and i + 1 < len(args):
+                    return args[i + 1]
+                if arg.startswith('--ptable='):
+                    return arg.split('=', 1)[1]
+            return 'msdos'
+    return None
+
+def flatpak_data_base_path(d):
+    name = d.getVar('FLATPAK_DATA_BASE_WKS')
+    if not name:
+        bb.fatal("flatpak-data.wks.in needs the machine's layout in FLATPAK_DATA_BASE_WKS, "
+                 "e.g. the WKS_FILE it had before")
+    path = wks_search([name], d.getVar('WKS_SEARCH_PATH'))
+    if not path:
+        bb.fatal("FLATPAK_DATA_BASE_WKS: %s is not in WKS_SEARCH_PATH" % name)
+    if os.path.basename(path) == 'flatpak-data.wks.in':
+        bb.fatal("FLATPAK_DATA_BASE_WKS must name the machine's layout, not flatpak-data.wks.in")
+    return path
+
+# The base layout for flatpak-data.wks.in. When growing, a base without a
+# bootloader line gets a GPT one; wic refuses a second bootloader line.
+def flatpak_data_base_wks(d):
+    path = flatpak_data_base_path(d)
+    body = flatpak_wks_body(d, path).rstrip('\n')
+    if d.getVar('FLATPAK_DATA_GROW') == '1' and flatpak_wks_ptable(d, path) is None:
+        body += '\nbootloader --ptable gpt'
+    return body
+
+# repart silently does nothing on MBR, so refuse a wic layout that isn't GPT.
+def flatpak_data_check_ptable(d):
+    if not d.getVar('USING_WIC'):
+        return
+    path = wks_search((d.getVar('WKS_FILES') or '').split(), d.getVar('WKS_SEARCH_PATH'))
+    if not path:
+        return
+    if os.path.basename(path) == 'flatpak-data.wks.in':
+        base = flatpak_data_base_path(d)
+        ptable = flatpak_wks_ptable(d, base) or 'gpt'
+        where = 'FLATPAK_DATA_BASE_WKS (%s)' % base
+    else:
+        ptable = flatpak_wks_ptable(d, path) or 'msdos'
+        where = 'WKS_FILE (%s)' % path
+    if ptable not in ('gpt', 'gpt-hybrid'):
+        bb.fatal("FLATPAK_DATA_GROW = \"1\" grows the data partition with systemd-repart, which needs a GPT "
+                 "disk, but %s makes a %s partition table. Use a layout with \"bootloader --ptable gpt\", "
+                 "or set FLATPAK_DATA_GROW = \"0\" to keep the partition at its built size." % (where, ptable))
 
 def flatpak_read_bundles(d, bundles_dir):
     """Parse and check the .meta and .refs files flatpak-bundle installs."""
@@ -423,6 +518,49 @@ def flatpak_system_repo_unit(d):
         '\n[Install]\nWantedBy=multi-user.target\n',
     ])
 
+def flatpak_systemd_escape(path):
+    """systemd-escape --path, for unit names derived from paths."""
+    escaped = []
+    for i, c in enumerate(path.strip('/')):
+        if c == '/':
+            escaped.append('-')
+        elif (c.isascii() and c.isalnum()) or c in ':_' or (c == '.' and i > 0):
+            escaped.append(c)
+        else:
+            escaped.append('\\x%02x' % ord(c))
+    return ''.join(escaped)
+
+def flatpak_repart_dropin(d):
+    """Run repart before the data partition's fsck and mount, so growfs
+    sees the new size on the same boot. --discard=no keeps repart from
+    wiping the gap before the first partition, where some boards keep a
+    raw bootloader."""
+    device = flatpak_systemd_escape('/dev/disk/by-label/' + d.getVar('FLATPAK_DATA_LABEL'))
+    mount = flatpak_systemd_escape(d.getVar('localstatedir') + '/lib/flatpak') + '.mount'
+    return ''.join([
+        '[Unit]\nBefore=systemd-fsck@%s.service %s\n' % (device, mount),
+        '\n[Service]\nExecStart=\nExecStart=systemd-repart --dry-run=no --discard=no\n',
+    ])
+
+def flatpak_data_repart(d):
+    """Install the repart.d file and drop-in that grow the data partition."""
+    rootfs = d.getVar('IMAGE_ROOTFS')
+    unitdir = d.getVar('systemd_system_unitdir')
+    service = unitdir + '/systemd-repart.service'
+    if not os.path.exists(rootfs + service) or \
+       not any(os.path.exists(rootfs + p + '/systemd-repart') for p in (d.getVar('bindir'), d.getVar('base_bindir'))):
+        bb.fatal("FLATPAK_DATA_GROW = \"1\" needs systemd-repart, and the image has no %s. Build systemd "
+                 "with it: PACKAGECONFIG:append:pn-systemd = \" repart openssl\", or set "
+                 "FLATPAK_DATA_GROW = \"0\"." % service)
+    repart = rootfs + d.getVar('nonarch_libdir') + '/repart.d'
+    bb.utils.mkdirhier(repart)
+    with open(os.path.join(repart, '50-flatpak-data.conf'), 'w') as f:
+        f.write('[Partition]\nType=%s\n' % d.getVar('FLATPAK_DATA_PART_TYPE').lower())
+    dropin = rootfs + service + '.d'
+    bb.utils.mkdirhier(dropin)
+    with open(os.path.join(dropin, '50-flatpak-data.conf'), 'w') as f:
+        f.write(flatpak_repart_dropin(d))
+
 def flatpak_install_unit(d, name, text, wanted_by):
     """Write a generated unit into the rootfs and enable it for WANTED_BY."""
     rootfs = d.getVar('IMAGE_ROOTFS')
@@ -570,6 +708,8 @@ def flatpak_deploy(d, installation):
     bb.utils.mkdirhier(installation)
     if mode == 'partition':
         flatpak_make_data_image(d, installation)
+        if d.getVar('FLATPAK_DATA_GROW') == '1':
+            flatpak_data_repart(d)
     elif mode == 'seed' and os.listdir(installation):
         seed = rootfs + d.getVar('FLATPAK_SEED')
         bb.utils.mkdirhier(os.path.dirname(seed))
