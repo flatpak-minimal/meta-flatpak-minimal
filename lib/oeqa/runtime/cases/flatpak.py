@@ -80,21 +80,52 @@ class FlatpakTest(OERuntimeTestCase):
         status, output = self.flatpak('repair --dry-run', timeout=600)
         self.assertEqual(status, 0, msg='flatpak repair failed: %s' % output)
 
+    def mountinfo(self, path):
+        """MAJOR:MINOR and root within the filesystem of the mount at PATH."""
+        status, output = self.target.run("awk '$5 == \"%s\" {print $3, $4}' /proc/self/mountinfo" % path)
+        lines = output.splitlines() if status == 0 else []
+        return lines[-1].split() if lines else None
+
     @OETestDepends(['ssh.SSHTest.test_ssh'])
     def test_flatpak_data_partition(self):
         """The data partition is mounted and, if grown, reaches the end of its disk."""
         if self.td.get('FLATPAK_DEPLOY_MODE') != 'partition':
             self.skipTest('the image has no flatpak data partition')
-        status, dev = self.target.run("awk '$5 == \"/var/lib/flatpak\" {print $3}' /proc/self/mountinfo")
-        dev = dev.strip().splitlines()[-1] if status == 0 and dev.strip() else ''
-        self.assertTrue(dev, msg='the data partition is not mounted at /var/lib/flatpak')
+        dirs = self.td.get('FLATPAK_DATA_DIRS', '').split()
+        mount = self.td.get('FLATPAK_DATA_MOUNT') if dirs else '/var/lib/flatpak'
+        data = self.mountinfo(mount)
+        self.assertTrue(data, msg='the data partition is not mounted at %s' % mount)
+        for path in dirs:
+            self.assertEqual(self.mountinfo(path), [data[0], '/' + path.rstrip('/').rsplit('/', 1)[1]],
+                             msg='%s is not bind-mounted from %s' % (path, mount))
+        if dirs:
+            status, output = self.target.run('systemctl show -P Result vfpk-data-migrate.service')
+            self.assertEqual(output.strip(), 'success', msg='vfpk-data-migrate.service failed: %s' % output)
+            status, output = self.target.run('ls -A %s' % quote(mount))
+            self.assertNotIn('repo', output.split(), msg='an installation is left at the partition root')
+        # vfpk-testimage-update.inc boots a partition from before FLATPAK_DATA_DIRS.
+        if dirs and self.td.get('VFPK_TEST_OLD_DATA'):
+            status, output = self.target.run('journalctl -b -u vfpk-data-migrate.service')
+            self.assertIn('moved the installation', output, msg=output)
+            if '/home' in dirs:
+                status, output = self.target.run('ls -A /home')
+                self.assertTrue(output.strip(), msg="/home is empty: the image's copy was not restored")
+
+        if self.td.get('FLATPAK_INSTALL_SCOPE') == 'user':
+            user = self.td.get('FLATPAK_INSTALL_USER')
+            status, output = self.target.run(
+                'stat -c %%U "$(awk -F: -v u=%s \'$1 == u {print $6}\' /etc/passwd)/.local/share/flatpak/repo"'
+                % quote(user))
+            self.assertEqual((status, output.strip()), (0, user),
+                             msg='the user installation does not belong to %s: %s' % (user, output))
+
         if self.td.get('FLATPAK_DATA_GROW') != '1':
             return
         status, output = self.target.run('systemctl show -P Result systemd-repart.service')
         self.assertEqual(output.strip(), 'success', msg='systemd-repart.service did not succeed: %s' % output)
-        # In 512-byte sectors.
+        # In 512-byte sectors. Under runqemu the disk is the image's size.
         status, output = self.target.run(
-            'p=$(readlink -f /sys/dev/block/%s); echo $(cat $p/start) $(cat $p/size) $(cat $p/../size)' % dev)
+            'p=$(readlink -f /sys/dev/block/%s); echo $(cat $p/start) $(cat $p/size) $(cat $p/../size)' % data[0])
         self.assertEqual(status, 0, msg='cannot read the partition geometry: %s' % output)
         start, size, total = (int(n) for n in output.split())
         self.assertLess(total - start - size, 4096,

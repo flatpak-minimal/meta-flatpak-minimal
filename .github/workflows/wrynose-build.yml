@@ -309,6 +309,35 @@ jobs:
           bitbake flatpak-minimal-image
           bitbake flatpak-minimal-image -c testimage
 
+      # An OS update that turns on FLATPAK_DATA_DIRS, booted with the data
+      # partition from the step above. See conf/include/vfpk-testimage-update.inc.
+      - name: Test flatpak-minimal-image after an update to FLATPAK_DATA_DIRS
+        if: ${{ !cancelled() && matrix.machine == 'qemux86-64' }}
+        shell: bash
+        working-directory: ../wrynose-linux-dummy
+        run: |
+          . ./openembedded-core/oe-init-build-env
+          grep -qx 'require conf/include/vfpk-testimage-partition.inc' ./conf/local.conf
+          cp -L tmp/deploy/images/qemux86-64/flatpak-minimal-image-qemux86-64.rootfs.vfpk-data.ext4 vfpk-old-data.ext4
+          sed -i 's#^require conf/include/vfpk-testimage-partition.inc$#require conf/include/vfpk-testimage-update.inc#' ./conf/local.conf
+          bitbake flatpak-minimal-image
+          bitbake flatpak-minimal-image -c testimage
+          rm -f vfpk-old-data.ext4
+
+      # The same, with a user installation on the partition, which then
+      # holds /var/lib/flatpak and /home. See
+      # conf/include/vfpk-testimage-partition-user.inc.
+      - name: Test flatpak-minimal-image with a user installation on the data partition
+        if: ${{ !cancelled() && matrix.machine == 'qemux86-64' }}
+        shell: bash
+        working-directory: ../wrynose-linux-dummy
+        run: |
+          . ./openembedded-core/oe-init-build-env
+          sed -i 's#^require conf/include/vfpk-testimage\(-user\|-partition\|-update\)\?.inc$#require conf/include/vfpk-testimage-partition-user.inc#' ./conf/local.conf
+          grep -qx 'require conf/include/vfpk-testimage-partition-user.inc' ./conf/local.conf
+          bitbake flatpak-minimal-image
+          bitbake flatpak-minimal-image -c testimage
+
       # Only reached when every step above succeeded; a failed or cancelled run
       # leaves the marker for the next one to act on.
       - name: Mark the build complete

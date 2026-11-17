@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: MIT
 #
 # Install flatpak content at build time. System scope uses /var/lib/flatpak;
-# user scope seeds the installation into FLATPAK_INSTALL_USER's home on boot.
+# user scope puts it in FLATPAK_INSTALL_USER's home.
 #
 # The content comes from flatpak-bundle packages: everything they install
 # under ${FLATPAK_BUNDLES_DIR} is collected after the rootfs is assembled,
@@ -42,7 +42,8 @@
 #   partition  an ext4 image deployed as ${IMAGE_LINK_NAME}.vfpk-data.ext4
 #              (FLATPAK_DATA_IMAGE), labeled FLATPAK_DATA_LABEL, with room
 #              for FLATPAK_DATA_EXTRA_SPACE MB of updates or a fixed
-#              FLATPAK_DATA_SIZE MB, mounted at /var/lib/flatpak. Place it
+#              FLATPAK_DATA_SIZE MB, mounted at /var/lib/flatpak, or
+#              holding FLATPAK_DATA_DIRS if set. Place it
 #              last with flatpak-data.wks.in. With FLATPAK_DATA_GROW,
 #              systemd-repart grows it to the end of the disk on first
 #              boot. It is built even without flatpak content.
@@ -77,23 +78,31 @@ FLATPAK_DATA_LABEL ??= "flatpak"
 # GPT type that systemd-repart matches. Our own, so it never matches root.
 FLATPAK_DATA_PART_TYPE ??= "E660927D-BA40-4163-B8FA-67D21924F4EB"
 # wic line for the data partition. No mount point or --ondisk: the class
-# writes the fstab entry. wic only sets --part-type on GPT.
+# writes the fstab entries. wic only sets --part-type on GPT.
 FLATPAK_DATA_WKS_PART ??= 'part --source rawcopy --sourceparams="file=${FLATPAK_DATA_IMAGE}" --fstype=ext4 --label ${FLATPAK_DATA_LABEL} --align 4096 --no-fstab-update${@' --part-type ' + d.getVar('FLATPAK_DATA_PART_TYPE') if d.getVar('FLATPAK_DATA_GROW') == '1' else ''}'
 # The machine's layout for flatpak-data.wks.in, named as WKS_FILE takes it.
 FLATPAK_DATA_BASE_WKS ??= ""
-# Grow the partition with systemd-repart; needs GPT and systemd with repart.
-FLATPAK_DATA_GROW ??= "0"
 FLATPAK_DATA_EXTRA_SPACE ??= "1024"
 FLATPAK_DATA_SIZE ??= ""
 # Empty derives a fixed UUID from the image name and machine.
 FLATPAK_DATA_UUID ??= ""
+# Directories bind-mounted from the partition, which is then mounted at
+# FLATPAK_DATA_MOUNT. Empty mounts it at /var/lib/flatpak, as before.
+# Needed for user scope.
+FLATPAK_DATA_DIRS ??= ""
+FLATPAK_DATA_MOUNT ??= "${localstatedir}/lib/vfpk-data"
+# Grow the partition with systemd-repart; needs GPT and systemd with repart.
+FLATPAK_DATA_GROW ??= "0"
 # On a read-only rootfs, volatile-binds makes ${localstatedir}/lib writable
 # with an overlay or a tmpfs copy mounted over it. Mounted first, the data
 # partition ends up underneath, and flatpak writes to a copy in RAM that is
 # gone at the next boot, so mount it after. Ordering against a unit that does
 # not exist is a no-op.
 FLATPAK_DATA_FSTAB_OPTIONS ??= "defaults,x-systemd.after=var-volatile-lib.service${@',x-systemd.growfs' if d.getVar('FLATPAK_DATA_GROW') == '1' else ''}"
-FLATPAK_DATA_FSTAB ??= "${@'LABEL=%s %s/lib/flatpak ext4 %s 0 2' % (d.getVar('FLATPAK_DATA_LABEL'), d.getVar('localstatedir'), d.getVar('FLATPAK_DATA_FSTAB_OPTIONS')) if d.getVar('FLATPAK_DEPLOY_MODE') == 'partition' else ''}"
+FLATPAK_DATA_FSTAB ??= "${@'LABEL=%s %s ext4 %s 0 2' % (d.getVar('FLATPAK_DATA_LABEL'), flatpak_data_mountpoint(d), d.getVar('FLATPAK_DATA_FSTAB_OPTIONS')) if d.getVar('FLATPAK_DEPLOY_MODE') == 'partition' else ''}"
+FLATPAK_DATA_TREE = "${WORKDIR}/vfpk-data"
+# Built from rootfs directories moved there; pseudo has to keep their owners.
+PSEUDO_INCLUDE_PATHS .= ",${FLATPAK_DATA_TREE}"
 # A user seed has a name of its own: vfpk-seed.service unpacks seed.tar into
 # the system installation, and so leaves it alone.
 FLATPAK_SEED = "${datadir}/vfpk/${@'user-' if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' else ''}seed.tar"
@@ -126,14 +135,44 @@ python () {
         if not bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d):
             bb.fatal("FLATPAK_DEPLOY_MODE = \"seed\" needs systemd in DISTRO_FEATURES for vfpk-seed.service")
         d.appendVar('IMAGE_INSTALL', ' vfpk-seed')
-    if mode == 'partition' and d.getVar('FLATPAK_DATA_GROW') == '1':
+    if mode == 'partition' and d.getVar('FLATPAK_DATA_DIRS'):
         if not bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d):
-            bb.fatal("FLATPAK_DATA_GROW = \"1\" needs systemd in DISTRO_FEATURES for systemd-repart "
-                     "and systemd-growfs")
-        if not re.fullmatch(r'[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}',
-                            d.getVar('FLATPAK_DATA_PART_TYPE') or ''):
-            bb.fatal("FLATPAK_DATA_PART_TYPE '%s' is not a GPT type UUID" % d.getVar('FLATPAK_DATA_PART_TYPE'))
-        flatpak_data_check_ptable(d)
+            bb.fatal("FLATPAK_DATA_DIRS needs systemd in DISTRO_FEATURES for vfpk-data-migrate.service")
+        # These become fstab fields and systemd unit names.
+        path_re = r'/[A-Za-z0-9_./-]+'
+        mount = d.getVar('FLATPAK_DATA_MOUNT') or ''
+        if not re.fullmatch(path_re, mount) or os.path.normpath(mount) != mount:
+            bb.fatal("FLATPAK_DATA_MOUNT '%s' must be an absolute, normalized path" % mount)
+        names = {}
+        for path, name in flatpak_data_dirs(d):
+            if not re.fullmatch(path_re, path) or os.path.normpath(path) != path or path == '/':
+                bb.fatal("FLATPAK_DATA_DIRS: '%s' must be an absolute, normalized path" % path)
+            if name in names:
+                bb.fatal("FLATPAK_DATA_DIRS: %s and %s would share %s/%s" % (names[name], path, mount, name))
+            names[name] = path
+        dirs = list(names.values())
+        for path in dirs + [mount]:
+            for other in dirs + [mount]:
+                if path != other and path.startswith(other + '/'):
+                    bb.fatal("FLATPAK_DATA_DIRS and FLATPAK_DATA_MOUNT must not nest: %s is in %s" % (path, other))
+        if d.getVar('localstatedir') + '/lib/flatpak' not in dirs:
+            bb.fatal("FLATPAK_DATA_DIRS must include %s/lib/flatpak, the system installation"
+                     % d.getVar('localstatedir'))
+    if mode == 'partition' and d.getVar('FLATPAK_INSTALL_SCOPE') == 'user':
+        if not d.getVar('FLATPAK_DATA_DIRS'):
+            bb.fatal("A user installation on the data partition needs FLATPAK_DATA_DIRS, with the "
+                     "user's home in it")
+        if not bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d):
+            bb.fatal("A user installation needs systemd in DISTRO_FEATURES to create the system installation")
+    if mode == 'partition':
+        if d.getVar('FLATPAK_DATA_GROW') == '1':
+            if not bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d):
+                bb.fatal("FLATPAK_DATA_GROW = \"1\" needs systemd in DISTRO_FEATURES for systemd-repart "
+                         "and systemd-growfs")
+            if not re.fullmatch(r'[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}',
+                                d.getVar('FLATPAK_DATA_PART_TYPE') or ''):
+                bb.fatal("FLATPAK_DATA_PART_TYPE '%s' is not a GPT type UUID" % d.getVar('FLATPAK_DATA_PART_TYPE'))
+            flatpak_data_check_ptable(d)
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,16}', d.getVar('FLATPAK_DATA_LABEL') or ''):
         bb.fatal("FLATPAK_DATA_LABEL '%s' is not an ext4 label (up to 16 of A-Z a-z 0-9 _ -)"
                  % d.getVar('FLATPAK_DATA_LABEL'))
@@ -164,12 +203,12 @@ python () {
 }
 
 ROOTFS_POSTPROCESS_COMMAND += "flatpak_cross_install"
-ROOTFS_POSTPROCESS_COMMAND:append = " flatpak_autostart_units"
+ROOTFS_POSTPROCESS_COMMAND:append = " flatpak_autostart_units flatpak_data_partition"
 
 do_rootfs[vardeps] += "BUNDLED_FLATPAKS FLATPAK_DEPLOY_MODE FLATPAK_INSTALL_SCOPE FLATPAK_INSTALL_USER FLATPAK_APP_USER FLATPAK_APP_ENV \
     FLATPAK_SERVICE_FILE FLATPAK_INSTALL_TIMEOUT FLATPAK_INSTALL_MEMORY FLATPAK_DATA_LABEL \
     FLATPAK_DATA_EXTRA_SPACE FLATPAK_DATA_SIZE FLATPAK_DATA_UUID FLATPAK_DATA_FSTAB FLATPAK_SEED \
-    FLATPAK_DATA_GROW FLATPAK_DATA_PART_TYPE"
+    FLATPAK_DATA_MOUNT FLATPAK_DATA_DIRS FLATPAK_DATA_GROW FLATPAK_DATA_PART_TYPE"
 # Tuning only; the result does not depend on it.
 flatpak_cross_install[vardepsexclude] += "FLATPAK_INSTALL_SMP"
 
@@ -518,6 +557,55 @@ def flatpak_system_repo_unit(d):
         '\n[Install]\nWantedBy=multi-user.target\n',
     ])
 
+def flatpak_data_migrate_script(d):
+    """Move an installation left at the partition's root by an image built
+    without FLATPAK_DATA_DIRS into flatpak/, and create missing directories
+    from the image's copy."""
+    dirs = flatpak_data_dirs(d)
+    return ''.join([
+        '#!/bin/sh\n',
+        'set -e\n',
+        # Before the bind mounts, $2 is still the rootfs's labeled mount point.
+        'label() {\n',
+        '    [ -e /sys/fs/selinux/enforce ] || return 0\n',
+        '    chcon --reference="$2" "$1" || echo "cannot label $1"\n',
+        '}\n',
+        'cd %s\n' % d.getVar('FLATPAK_DATA_MOUNT'),
+        # .vfpk-migrate is left by an interrupted move.
+        'if { [ -e repo ] || [ -d .vfpk-migrate ]; } && [ ! -e flatpak ]; then\n',
+        '    mkdir -p .vfpk-migrate\n',
+        '    for e in * .[!.]* ..?*; do\n',
+        '        case $e in lost+found|.vfpk-migrate) continue ;; esac\n',
+        '        if [ -e "$e" ] || [ -L "$e" ]; then mv "$e" .vfpk-migrate/; fi\n',
+        '    done\n',
+        '    mv .vfpk-migrate flatpak\n',
+        '    label flatpak %s/lib/flatpak\n' % d.getVar('localstatedir'),
+        '    echo "moved the installation into $PWD/flatpak"\n',
+        'fi\n',
+    ] + ['[ -d %s ] || { mkdir -m 755 %s;%s label %s %s; }\n'
+         % (name, name, '' if path == d.getVar('localstatedir') + '/lib/flatpak' else
+            ' [ ! -e %s ] || tar -xf %s -C %s;' % (flatpak_data_seed(d, name), flatpak_data_seed(d, name), name),
+            name, path)
+         for path, name in dirs])
+
+def flatpak_data_seed(d, name):
+    """The image's copy of a FLATPAK_DATA_DIRS directory, for an old partition."""
+    return '%s/vfpk/data-%s.tar' % (d.getVar('datadir'), name)
+
+def flatpak_data_migrate_unit(d, script):
+    mounts = ' '.join(flatpak_systemd_escape(path) + '.mount' for path, _ in flatpak_data_dirs(d))
+    return ''.join([
+        '[Unit]\n',
+        'Description=Lay out the flatpak data partition\n',
+        'DefaultDependencies=no\n',
+        'RequiresMountsFor=%s\n' % d.getVar('FLATPAK_DATA_MOUNT'),
+        'Before=%s\n' % mounts,
+        '\n[Service]\n',
+        'Type=oneshot\nRemainAfterExit=yes\n',
+        'ExecStart=%s\n' % script,
+        '\n[Install]\nWantedBy=local-fs.target\n',
+    ])
+
 def flatpak_systemd_escape(path):
     """systemd-escape --path, for unit names derived from paths."""
     escaped = []
@@ -536,7 +624,7 @@ def flatpak_repart_dropin(d):
     wiping the gap before the first partition, where some boards keep a
     raw bootloader."""
     device = flatpak_systemd_escape('/dev/disk/by-label/' + d.getVar('FLATPAK_DATA_LABEL'))
-    mount = flatpak_systemd_escape(d.getVar('localstatedir') + '/lib/flatpak') + '.mount'
+    mount = flatpak_systemd_escape(flatpak_data_mountpoint(d)) + '.mount'
     return ''.join([
         '[Unit]\nBefore=systemd-fsck@%s.service %s\n' % (device, mount),
         '\n[Service]\nExecStart=\nExecStart=systemd-repart --dry-run=no --discard=no\n',
@@ -577,20 +665,22 @@ def flatpak_install_unit(d, name, text, wanted_by):
         os.unlink(link)
     os.symlink(os.path.join(unitdir, name), link)
 
-# Runs last among the rootfs post-processing steps, so users created by
-# them (extrausers, for one) exist when the unit's user is checked.
+# Runs after the other rootfs post-processing steps (but before the data
+# partition), so users they create exist when the unit's user is checked.
 python flatpak_autostart_units () {
     import json
     import re
 
     rootfs = d.getVar('IMAGE_ROOTFS')
+    mode = d.getVar('FLATPAK_DEPLOY_MODE')
     with open(d.getVar('FLATPAK_AUTOSTART')) as f:
         autostart = json.load(f)
 
     # The package's own vfpk-seed.service finds no system seed and does
     # nothing; these units are separate rather than edits to it.
     if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user':
-        flatpak_install_unit(d, 'vfpk-seed-user.service', flatpak_user_seed_unit(d), 'multi-user.target')
+        if mode == 'seed':
+            flatpak_install_unit(d, 'vfpk-seed-user.service', flatpak_user_seed_unit(d), 'multi-user.target')
         flatpak_install_unit(d, 'vfpk-system-repo.service', flatpak_system_repo_unit(d), 'multi-user.target')
     seed_unit = 'vfpk-seed-user.service' if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' else 'vfpk-seed.service'
 
@@ -615,7 +705,9 @@ python flatpak_autostart_units () {
                     'Description=Flatpak app %s\n' % app,
                     'After=network.target\n',
                     'Requires=user@%d.service\nAfter=user@%d.service\n' % (uid, uid),
-                    'Requires=%s\nAfter=%s\n' % (seed_unit, seed_unit) if d.getVar('FLATPAK_DEPLOY_MODE') == 'seed' else '',
+                    'Requires=%s\nAfter=%s\n' % (seed_unit, seed_unit) if mode == 'seed' else '',
+                    'RequiresMountsFor=%s %s/lib/flatpak\n' % (home, d.getVar('localstatedir'))
+                    if mode == 'partition' else '',
                     '\n',
                     '[Service]\n',
                     'User=%s\n' % user,
@@ -630,20 +722,8 @@ python flatpak_autostart_units () {
                     'WantedBy=multi-user.target\n',
                 ])
 
-        unitdir = d.getVar('systemd_system_unitdir')
-        wants = os.path.join(rootfs + d.getVar('sysconfdir'), 'systemd', 'system', 'multi-user.target.wants')
-        bb.utils.mkdirhier(rootfs + unitdir)
-        bb.utils.mkdirhier(wants)
         for app, text in units.items():
-            name = 'flatpak-app-%s.service' % app
-            path = os.path.join(rootfs + unitdir, name)
-            with open(path, 'w') as f:
-                f.write(text)
-            os.chmod(path, 0o644)
-            link = os.path.join(wants, name)
-            if os.path.lexists(link):
-                os.unlink(link)
-            os.symlink(os.path.join(unitdir, name), link)
+            flatpak_install_unit(d, 'flatpak-app-%s.service' % app, text, 'multi-user.target')
 }
 
 def flatpak_installed_refs(d, output):
@@ -702,20 +782,19 @@ def flatpak_make_data_image(d, tree):
     bb.note("Built %s (%d MB, label %s)" % (image, size_mb, d.getVar('FLATPAK_DATA_LABEL')))
 
 def flatpak_deploy(d, installation):
-    """Move the installation in the rootfs where FLATPAK_DEPLOY_MODE says."""
+    """Move the installation where FLATPAK_DEPLOY_MODE says. A partition is
+    built later, by flatpak_data_partition."""
     rootfs = d.getVar('IMAGE_ROOTFS')
     mode = d.getVar('FLATPAK_DEPLOY_MODE')
     bb.utils.mkdirhier(installation)
     if mode == 'partition':
-        flatpak_make_data_image(d, installation)
-        if d.getVar('FLATPAK_DATA_GROW') == '1':
-            flatpak_data_repart(d)
-    elif mode == 'seed' and os.listdir(installation):
-        seed = rootfs + d.getVar('FLATPAK_SEED')
-        bb.utils.mkdirhier(os.path.dirname(seed))
-        flatpak_run(d, ['tar', '--numeric-owner', '-cf', seed, '-C', installation, '.'], unload_pseudo=False)
-        os.chmod(seed, 0o644)
-    if mode != 'rootfs':
+        return
+    if mode == 'seed':
+        if os.listdir(installation):
+            seed = rootfs + d.getVar('FLATPAK_SEED')
+            bb.utils.mkdirhier(os.path.dirname(seed))
+            flatpak_run(d, ['tar', '--numeric-owner', '-cf', seed, '-C', installation, '.'], unload_pseudo=False)
+            os.chmod(seed, 0o644)
         # Left as the mount point of the writable storage.
         bb.utils.remove(installation, recurse=True)
         bb.utils.mkdirhier(installation)
@@ -724,6 +803,138 @@ def flatpak_deploy(d, installation):
     if entry:
         with open(os.path.join(rootfs + d.getVar('sysconfdir'), 'fstab'), 'a') as f:
             f.write(entry + '\n')
+
+def flatpak_data_dirs(d):
+    """FLATPAK_DATA_DIRS as (path, subdirectory of the data partition) pairs."""
+    return [(os.path.normpath(path), os.path.basename(os.path.normpath(path)))
+            for path in (d.getVar('FLATPAK_DATA_DIRS') or '').split()]
+
+def flatpak_data_mountpoint(d):
+    """Where the data partition itself is mounted."""
+    if d.getVar('FLATPAK_DATA_DIRS'):
+        return d.getVar('FLATPAK_DATA_MOUNT')
+    return d.getVar('localstatedir') + '/lib/flatpak'
+
+def flatpak_rootfs_path(d, path):
+    """PATH in the rootfs. Refuses symlinks, which could point at the host."""
+    rootfs = os.path.realpath(d.getVar('IMAGE_ROOTFS'))
+    if os.path.realpath(rootfs + path) != os.path.normpath(rootfs + path):
+        bb.fatal("%s is or passes through a symlink in the image; name the directory it "
+                 "points to instead" % path)
+    return rootfs + path
+
+def flatpak_move_contents(src, dest):
+    """Move what SRC holds into DEST, which takes SRC's owner and mode."""
+    import stat
+    st = os.lstat(src)
+    os.chown(dest, st.st_uid, st.st_gid)
+    os.chmod(dest, stat.S_IMODE(st.st_mode))
+    for name in os.listdir(src):
+        os.rename(os.path.join(src, name), os.path.join(dest, name))
+
+def flatpak_user_installation(d, installation):
+    """Move a user installation into its account's home, owned by the account."""
+    rootfs = d.getVar('IMAGE_ROOTFS')
+    user = d.getVar('FLATPAK_INSTALL_USER')
+    uid, gid, home = flatpak_user_account(d, user)
+    if not any(home.startswith(path + '/') for path, _ in flatpak_data_dirs(d)):
+        bb.fatal("The home of '%s' (%s) is not in FLATPAK_DATA_DIRS, so its installation would not "
+                 "be on the data partition" % (user, home))
+    flatpak_rootfs_path(d, home)
+    target = rootfs + home + '/.local/share/flatpak'
+    if os.path.lexists(target):
+        bb.fatal("%s already exists in the image; the user installation would replace it" % target[len(rootfs):])
+    for path, mode in ((rootfs + home, 0o700), (rootfs + home + '/.local', 0o700),
+                       (rootfs + home + '/.local/share', 0o755)):
+        if not os.path.isdir(path):
+            os.mkdir(path)
+            os.chown(path, uid, gid)
+            os.chmod(path, mode)
+    os.rename(installation, target)
+    os.mkdir(installation)
+    # The guest installed as root.
+    for top, dirs, names in os.walk(target):
+        os.lchown(top, uid, gid)
+        for name in dirs + names:
+            os.lchown(os.path.join(top, name), uid, gid)
+
+# Built last, once users and their homes exist.
+python flatpak_data_partition () {
+    if d.getVar('FLATPAK_DEPLOY_MODE') != 'partition':
+        return
+
+    rootfs = d.getVar('IMAGE_ROOTFS')
+    mount = d.getVar('FLATPAK_DATA_MOUNT')
+    installation = rootfs + d.getVar('localstatedir') + '/lib/flatpak'
+    fstab = d.getVar('FLATPAK_DATA_FSTAB')
+    if not d.getVar('FLATPAK_DATA_DIRS'):
+        # The installation is the partition's root.
+        bb.utils.mkdirhier(installation)
+        flatpak_make_data_image(d, installation)
+        bb.utils.remove(installation, recurse=True)
+        bb.utils.mkdirhier(installation)
+        if fstab:
+            with open(os.path.join(rootfs + d.getVar('sysconfdir'), 'fstab'), 'a') as f:
+                f.write(fstab + '\n')
+        if d.getVar('FLATPAK_DATA_GROW') == '1':
+            flatpak_data_repart(d)
+        return
+
+    # The copies are taken before the user installation moves into its home.
+    for path, name in flatpak_data_dirs(d):
+        src = flatpak_rootfs_path(d, path)
+        if path != d.getVar('localstatedir') + '/lib/flatpak' and os.path.isdir(src) and os.listdir(src):
+            seed = rootfs + flatpak_data_seed(d, name)
+            bb.utils.mkdirhier(os.path.dirname(seed))
+            flatpak_run(d, ['tar', '--numeric-owner', '-cf', seed, '-C', src, '.'], unload_pseudo=False)
+            os.chmod(seed, 0o644)
+
+    if d.getVar('FLATPAK_INSTALL_SCOPE') == 'user' and os.path.isdir(os.path.join(installation, 'repo')):
+        flatpak_user_installation(d, installation)
+
+    tree = d.getVar('FLATPAK_DATA_TREE')
+    bb.utils.remove(tree, recurse=True)
+    bb.utils.mkdirhier(tree)
+    os.chmod(tree, 0o755)
+    fstab = [fstab]
+    for path, name in flatpak_data_dirs(d):
+        bb.utils.mkdirhier(flatpak_rootfs_path(d, path))
+        os.mkdir(os.path.join(tree, name))
+        flatpak_move_contents(rootfs + path, os.path.join(tree, name))
+        # Left empty in the rootfs as the mount point.
+        fstab.append('%s/%s %s none bind,x-systemd.requires-mounts-for=%s,'
+                     'x-systemd.requires=vfpk-data-migrate.service 0 0' % (mount, name, path, mount))
+    bb.utils.mkdirhier(rootfs + mount)
+
+    flatpak_make_data_image(d, tree)
+    bb.utils.remove(tree, recurse=True)
+
+    with open(os.path.join(rootfs + d.getVar('sysconfdir'), 'fstab'), 'a') as f:
+        f.write(''.join(line + '\n' for line in fstab if line))
+
+    script = d.getVar('libexecdir') + '/vfpk-data-migrate'
+    bb.utils.mkdirhier(rootfs + d.getVar('libexecdir'))
+    with open(rootfs + script, 'w') as f:
+        f.write(flatpak_data_migrate_script(d))
+    os.chmod(rootfs + script, 0o755)
+    flatpak_install_unit(d, 'vfpk-data-migrate.service', flatpak_data_migrate_unit(d, script), 'local-fs.target')
+    if d.getVar('FLATPAK_DATA_GROW') == '1':
+        flatpak_data_repart(d)
+}
+
+# Anything written to a data directory after it was moved would be hidden
+# by the mount on the device.
+python flatpak_data_mountpoints () {
+    if d.getVar('FLATPAK_DEPLOY_MODE') != 'partition':
+        return
+    rootfs = d.getVar('IMAGE_ROOTFS')
+    paths = [path for path, _ in flatpak_data_dirs(d)] or [d.getVar('localstatedir') + '/lib/flatpak']
+    for path in paths:
+        if os.listdir(rootfs + path):
+            bb.fatal("%s is not empty in the rootfs, but the data partition is mounted over it: "
+                     "something wrote to it after flatpak_data_partition" % path)
+}
+IMAGE_PREPROCESS_COMMAND += "flatpak_data_mountpoints"
 
 FLATPAK_TMP = "${WORKDIR}/vfpk-tmp"
 FLATPAK_AUTOSTART = "${WORKDIR}/vfpk-autostart.json"
@@ -744,8 +955,7 @@ python flatpak_cross_install () {
 
     installation = rootfs + d.getVar('localstatedir') + '/lib/flatpak'
     if not bundles:
-        # A partition layout expects its partition whether or not anything
-        # was installed.
+        # The mount points and the partition are still needed.
         flatpak_deploy(d, installation)
         return
 
