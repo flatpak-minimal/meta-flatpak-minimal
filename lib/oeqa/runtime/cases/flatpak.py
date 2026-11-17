@@ -80,6 +80,27 @@ class FlatpakTest(OERuntimeTestCase):
         status, output = self.flatpak('repair --dry-run', timeout=600)
         self.assertEqual(status, 0, msg='flatpak repair failed: %s' % output)
 
+    @OETestDepends(['ssh.SSHTest.test_ssh'])
+    def test_flatpak_data_partition(self):
+        """The data partition is mounted and, if grown, reaches the end of its disk."""
+        if self.td.get('FLATPAK_DEPLOY_MODE') != 'partition':
+            self.skipTest('the image has no flatpak data partition')
+        status, dev = self.target.run("awk '$5 == \"/var/lib/flatpak\" {print $3}' /proc/self/mountinfo")
+        dev = dev.strip().splitlines()[-1] if status == 0 and dev.strip() else ''
+        self.assertTrue(dev, msg='the data partition is not mounted at /var/lib/flatpak')
+        if self.td.get('FLATPAK_DATA_GROW') != '1':
+            return
+        status, output = self.target.run('systemctl show -P Result systemd-repart.service')
+        self.assertEqual(output.strip(), 'success', msg='systemd-repart.service did not succeed: %s' % output)
+        # In 512-byte sectors.
+        status, output = self.target.run(
+            'p=$(readlink -f /sys/dev/block/%s); echo $(cat $p/start) $(cat $p/size) $(cat $p/../size)' % dev)
+        self.assertEqual(status, 0, msg='cannot read the partition geometry: %s' % output)
+        start, size, total = (int(n) for n in output.split())
+        self.assertLess(total - start - size, 4096,
+                        msg='the data partition leaves %d MiB unused at the end of its disk'
+                            % ((total - start - size) // 2048))
+
     @OETestDepends(['flatpak.FlatpakTest.test_flatpak_installed_refs'])
     def test_flatpak_run(self):
         """The test app runs in its sandbox."""
