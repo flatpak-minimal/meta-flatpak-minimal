@@ -45,6 +45,11 @@ jobs:
       VULKAN_BRANCH: master
 
     runs-on: [self-hosted, linux]
+    # A warm build of one machine takes about two hours. Without a limit, a
+    # bitbake client left waiting on a server whose cooker was OOM-killed
+    # holds the runner, and the job lock shared with other runners on the
+    # host, for GitHub's default of six.
+    timeout-minutes: 240
 
     container:
       image: ghcr.io/meta-flutter/meta-flutter/ubuntu-24-dev:main
@@ -159,6 +164,13 @@ jobs:
           # SSTATE_DIR is the same directory meta-flutter's own wrynose build
           # writes, so flutter-engine and dart-sdk are usually already warm.
           echo 'require ../meta-flutter/conf/distro/include/ci-build.inc' >> ./conf/local.conf
+          # ci-build.inc sizes the parallelism cap from total RAM, but these
+          # runners are workstations: a desktop and a RAM-backed /tmp can hold
+          # a third of it, and builds sized for all of it get OOM-killed. Size
+          # it from what is available when the job starts. The container has
+          # no memory limit, so /proc/meminfo is the host's.
+          avail_gb=$(awk '/^MemAvailable:/ { print int($2 / 1048576) }' /proc/meminfo)
+          echo "CI_BUILD_MEM_GB = \"$avail_gb\"" >> ./conf/local.conf
           echo '********** ./conf/local.conf **********'
           cat ./conf/local.conf
           echo '***************************************'
