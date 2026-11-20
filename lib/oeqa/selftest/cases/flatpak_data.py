@@ -15,6 +15,9 @@ PARTITION = ('INIT_MANAGER = "systemd"\n'
              'DISTRO_FEATURES:append = " polkit"\n'
              'FLATPAK_DEPLOY_MODE:pn-%s = "partition"\n' % IMAGE)
 CONFIG = PARTITION + 'FLATPAK_DATA_GROW:pn-%s = "1"\n' % IMAGE
+DIRS = 'FLATPAK_DATA_DIRS:pn-%s = "/var/lib/flatpak /home"\n' % IMAGE
+USER = ('FLATPAK_INSTALL_SCOPE:pn-%s = "user"\n'
+        'FLATPAK_INSTALL_USER:pn-%s = "vfpktest"\n' % (IMAGE, IMAGE))
 WIC = ('IMAGE_FSTYPES:append:pn-%s = " wic"\n'
        'WKS_FILE:pn-%s = "flatpak-data.wks.in"\n' % (IMAGE, IMAGE))
 BASE = 'FLATPAK_DATA_BASE_WKS:pn-%s = "%s"\n'
@@ -53,6 +56,33 @@ class FlatpakDataPartitionTests(OESelftestTestCase):
             f.write(text)
         self.add_command_to_tearDown('rm -f %s' % base)
         return base
+
+    def test_partition_default_mount(self):
+        """Without FLATPAK_DATA_DIRS the partition is mounted at /var/lib/flatpak."""
+        self.write_config(PARTITION)
+        v = get_bb_vars(['FLATPAK_DATA_FSTAB', 'localstatedir'], IMAGE)
+        self.assertEqual(v['FLATPAK_DATA_FSTAB'].split()[1], v['localstatedir'] + '/lib/flatpak')
+
+    def test_partition_data_dirs_mount(self):
+        """With FLATPAK_DATA_DIRS the partition is mounted at FLATPAK_DATA_MOUNT."""
+        self.write_config(PARTITION + DIRS)
+        v = get_bb_vars(['FLATPAK_DATA_FSTAB', 'FLATPAK_DATA_MOUNT'], IMAGE)
+        self.assertEqual(v['FLATPAK_DATA_FSTAB'].split()[1], v['FLATPAK_DATA_MOUNT'])
+
+    def test_user_scope_needs_data_dirs(self):
+        self.parse_fails(USER, 'needs FLATPAK_DATA_DIRS')
+
+    def test_data_dirs_need_system_installation(self):
+        self.parse_fails('FLATPAK_DATA_DIRS:pn-%s = "/home"\n' % IMAGE,
+                         'FLATPAK_DATA_DIRS must include')
+
+    def test_data_dirs_must_not_nest(self):
+        self.parse_fails('FLATPAK_DATA_DIRS:pn-%s = "/var/lib/flatpak /var/lib/flatpak/x"\n' % IMAGE,
+                         'must not nest')
+
+    def test_data_dirs_need_distinct_names(self):
+        self.parse_fails('FLATPAK_DATA_DIRS:pn-%s = "/var/lib/flatpak /opt/flatpak"\n' % IMAGE,
+                         'would share')
 
     def wks_template(self, config):
         self.write_config(CONFIG + WIC + config)

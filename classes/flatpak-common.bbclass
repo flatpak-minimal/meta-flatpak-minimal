@@ -145,12 +145,13 @@ def flatpak_license_names(d, expression):
 #   rootfs    - unpacked into ${IMAGE_ROOTFS}/var/lib/flatpak. Only valid when
 #               the rootfs is writable at runtime.
 #   partition - an ext4 image in DEPLOY_DIR_IMAGE that wic places as the
-#               partition mounted at /var/lib/flatpak.
+#               partition mounted at /var/lib/flatpak, or holding
+#               FLATPAK_DATA_DIRS.
 #   seed      - a tar in the rootfs that a first-boot service unpacks into
 #               the writable /var/lib/flatpak.
 # A read-only rootfs cannot hold an installation that 'flatpak update' can
 # write to, so it defaults to partition.
-# User installations are seeded into the account's writable home on first boot.
+# User installations go into the account's home, by seed or partition.
 # Keep the build guest's storage path independent of that account's UID/home.
 FLATPAK_INSTALL_SCOPE ??= "system"
 FLATPAK_INSTALL_USER ??= "${FLATPAK_APP_USER}"
@@ -170,8 +171,9 @@ python () {
         user = d.getVar('FLATPAK_INSTALL_USER') or ''
         if not re.fullmatch(r'[a-z_][a-z0-9_-]*', user) or user == 'root':
             bb.fatal("FLATPAK_INSTALL_SCOPE = 'user' needs a non-root FLATPAK_INSTALL_USER")
-        if mode != 'seed':
-            bb.fatal("FLATPAK_INSTALL_SCOPE = 'user' needs FLATPAK_DEPLOY_MODE = 'seed'; mount the user's home on writable storage")
+        if mode not in ('seed', 'partition'):
+            bb.fatal("FLATPAK_INSTALL_SCOPE = 'user' needs FLATPAK_DEPLOY_MODE 'seed', or 'partition' "
+                     "with the user's home in FLATPAK_DATA_DIRS")
     modes = (d.getVar('FLATPAK_DEPLOY_MODES') or '').split()
     if mode not in modes:
         bb.fatal("FLATPAK_DEPLOY_MODE is '%s'; it must be one of: %s" % (mode, ' '.join(modes)))

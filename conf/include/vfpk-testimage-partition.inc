@@ -19,6 +19,8 @@ require conf/include/vfpk-testimage.inc
 
 FLATPAK_DEPLOY_MODE:pn-flatpak-minimal-image = "partition"
 FLATPAK_DATA_GROW:pn-flatpak-minimal-image = "1"
+# The same in every build, for vfpk-testimage-update.inc.
+FLATPAK_DATA_SIZE:pn-flatpak-minimal-image = "1536"
 PACKAGECONFIG:append:pn-systemd = " repart openssl"
 
 IMAGE_FSTYPES:append:pn-flatpak-minimal-image = " wic"

@@ -284,6 +284,27 @@ default, and needs:
   PACKAGECONFIG:append:pn-systemd = " repart openssl"
   ```
 
+#### More directories on the data partition
+
+`FLATPAK_DATA_DIRS` puts more of the rootfs on the data partition, such as
+`/home` for a user installation:
+
+```
+FLATPAK_DATA_DIRS:pn-<image> = "${localstatedir}/lib/flatpak /home"
+```
+
+Each directory is moved into a subdirectory of the partition named after it,
+and bind-mounted back. The partition itself is mounted at
+`FLATPAK_DATA_MOUNT` (default `/var/lib/vfpk-data`). The list must include
+`/var/lib/flatpak`. It is empty by default, which mounts the partition at
+`/var/lib/flatpak` as before.
+
+A device updated from an image without `FLATPAK_DATA_DIRS` has the
+installation at the partition's root. `vfpk-data-migrate.service` moves it
+into `flatpak/` on the first boot, before the bind mounts, and creates the
+other directories from the image's copy of them. What the device wrote to
+the old rootfs's `/home` is not carried over.
+
 `seed` puts the installation in the rootfs as a tar
 (`/usr/share/vfpk/seed.tar`), and `vfpk-seed.service` unpacks it into
 `/var/lib/flatpak` on first boot. It never unpacks over an existing
@@ -314,8 +335,10 @@ account's first login can take a while on slow storage.
 `vfpk-system-repo.service` creates an empty system installation on every
 boot it is missing, as it is after each reboot on a volatile `/var`. flatpak
 needs it before unprivileged commands that cover every installation, such as
-`flatpak list`, can run. User scope requires `seed`; the account must exist
-and its home must be writable and persistent. Existing installations are
+`flatpak list`, can run. User scope requires `seed`, or `partition` with the
+account's home in `FLATPAK_DATA_DIRS`, where the build puts the installation
+in the home on the partition. The account must exist and its home must be
+writable and persistent. Existing installations are
 preserved; system installations are not migrated. Custom data-directory
 locations are unsupported.
 
@@ -615,8 +638,12 @@ list every installation. CI runs it on qemux86-64.
 `conf/include/vfpk-testimage-partition.inc` puts it on a data partition
 with growing on, in a GPT image 1 GiB larger than its partitions, and the
 suite checks that the partition grew to the end of the disk. CI runs it on
-qemux86-64. `oe-selftest -r flatpak_data` checks the data partition
-settings at parse time.
+qemux86-64. `conf/include/vfpk-testimage-partition-user.inc` adds a user
+installation, with `/var/lib/flatpak` and `/home` on the partition, and
+`conf/include/vfpk-testimage-update.inc` boots that layout on a data
+partition from a build without it, as after an OS update. CI runs both.
+`oe-selftest -r flatpak_data` checks the data partition settings at
+parse time.
 
 ## Remotes
 
