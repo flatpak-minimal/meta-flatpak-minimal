@@ -298,6 +298,11 @@ jobs:
       # publishing it to a host comes later. Its settings go in a file
       # passed with -R, not local.conf, so the steps after it build what
       # they would without it.
+      #
+      # Each machine indexes into a repository of its own. The jobs share
+      # build/tmp/deploy, so one repo-dev would collect every arch built on
+      # this runner, by this run or an earlier one, signed or not, and each
+      # job would keep all of it. Publishing combines the arches later.
       - name: Build the developer repository
         if: ${{ !cancelled() }}
         shell: bash
@@ -317,6 +322,7 @@ jobs:
           trap 'rm -f "$conf"' EXIT
           echo "BBMULTICONFIG = \"$mc $mc-generic\"" >> "$conf"
           echo "FLATPAK_PUBLISH_PACKAGE_ARCHS:pn-flatpak-repo-index-dev = \"$mc-generic\"" >> "$conf"
+          echo "FLATPAK_PUBLISH_REPO:pn-flatpak-repo-index-dev = \"\${FLATPAK_DEPLOY_DIR}/repo-dev-$mc\"" >> "$conf"
           if [ -n "$GPG_KEY" ]; then
               # Outside the build tree, which the next run, a pull request's
               # among them, finds on this persistent runner.
@@ -337,7 +343,7 @@ jobs:
           bitbake -R "$conf" flatpak-repo-index-dev
           [ "$KEEP" = true ] || exit 0
           deploy=$(bitbake-getvar -r flatpak-repo-index-dev --value FLATPAK_DEPLOY_DIR)
-          tar -C "$deploy" -cf "$GITHUB_WORKSPACE/repo-dev-${{ env.MACHINE }}.tar" repo-dev
+          tar -C "$deploy/repo-dev-$mc" --transform 's,^\.,repo-dev,' -cf "$GITHUB_WORKSPACE/repo-dev-${{ env.MACHINE }}.tar" .
 
       - name: Upload the developer repository
         if: ${{ !cancelled() && env.KEEP == 'true' && hashFiles(format('repo-dev-{0}.tar', matrix.machine)) != '' }}
