@@ -139,12 +139,23 @@ jobs:
         working-directory: ../wrynose-linux-dummy
         run: |
           MARKER=.ci-build-incomplete
+          # The vfpk multiconfigs each have a TMPDIR of their own
+          # (build/tmp-vfpk-*), but they deploy into build/tmp/deploy. Their
+          # stamps and sstate manifests then record files under build/tmp, so
+          # removing build/tmp alone leaves them claiming deployed output that
+          # is gone: bitbake skips the tasks and the consumer finds nothing,
+          #
+          #   do_flatpak_repo_index: no flatpak refs deployed under
+          #   .../tmp/deploy/flatpak/refs for vfpk-x86-64-generic
+          #
+          # Remove them together; sstate restores all of it.
           if [ -e "$MARKER" ]; then
-            echo "::warning::previous run did not finish; removing build/tmp"
-            if [ -d build/tmp ]; then
-              echo "removing $(du -sh build/tmp | cut -f1) from build/tmp"
-              rm -rf build/tmp
-            fi
+            echo "::warning::previous run did not finish; removing build/tmp*"
+            for d in build/tmp build/tmp-*; do
+              [ -d "$d" ] || continue
+              echo "removing $(du -sh "$d" | cut -f1) from $d"
+              rm -rf "$d"
+            done
             rm -f "$MARKER"
           else
             echo "previous run finished cleanly; keeping build/tmp"
