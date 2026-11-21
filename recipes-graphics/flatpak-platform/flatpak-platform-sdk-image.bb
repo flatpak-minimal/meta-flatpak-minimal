@@ -7,8 +7,9 @@ SUMMARY = "Base flatpak SDK"
 DESCRIPTION = "org.flatpak_minimal.Sdk: the packages of \
                org.flatpak_minimal.Platform from the same build, plus their \
                development files and a native toolchain, so apps build \
-               against the runtime's ABI with flatpak-builder. SDK extensions \
-               mount under /usr/lib/sdk."
+               against the runtime's ABI with flatpak-builder: autotools, \
+               cmake and meson, with eu-strip and debugedit for its strip \
+               and debuginfo step. SDK extensions mount under /usr/lib/sdk."
 HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 
 LICENSE = "MIT"
@@ -28,12 +29,14 @@ FLATPAK_RUNTIME_PACKAGES = "\
     bash \
     cmake \
     coreutils \
+    debugedit \
     diffutils \
     file \
     findutils \
     gawk \
     grep \
     gzip \
+    meson \
     ninja \
     patch \
     sed \

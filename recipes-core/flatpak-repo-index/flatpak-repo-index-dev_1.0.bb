@@ -13,5 +13,13 @@ HOMEPAGE = "https://github.com/flatpak-minimal/meta-flatpak-minimal"
 LICENSE = "MIT"
 
 FLATPAK_PUBLISH_REPO = "${FLATPAK_DEPLOY_DIR}/repo-dev"
+# Developers install the SDK over the network: one delta from scratch per ref
+# instead of every object, at about twice the repository's size.
+FLATPAK_PUBLISH_DELTAS ?= "previous empty"
+# With FLATPAK_PUBLISH_REMOTE_URL set, developers add the repository with
+#   flatpak remote-add --user flatpak-minimal-sdk URL/flatpak-minimal-sdk.flatpakrepo
+FLATPAK_PUBLISH_REMOTE_NAME ?= "flatpak-minimal-sdk"
+FLATPAK_PUBLISH_REMOTE_TITLE ?= "flatpak-minimal SDK"
+FLATPAK_PUBLISH_REMOTE_HOMEPAGE ?= "${HOMEPAGE}"
 
 require flatpak-repo-index.inc

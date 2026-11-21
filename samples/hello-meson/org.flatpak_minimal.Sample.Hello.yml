@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Contributors of meta-flatpak-minimal
+#
+# SPDX-License-Identifier: MIT
+#
+# A minimal native app built with flatpak-builder against this layer's SDK
+# instead of Freedesktop's. Its sources are in this directory, so it builds
+# offline:
+#
+#   flatpak-builder --user --arch=aarch64 --repo=repo build-dir org.flatpak_minimal.Sample.Hello.yml
+#
+# A command-line app, so no finish-args: no display, network or devices.
+# See "Building apps against the SDK" in the layer's README.
+app-id: org.flatpak_minimal.Sample.Hello
+runtime: org.flatpak_minimal.Platform
+runtime-version: 'wrynose'
+sdk: org.flatpak_minimal.Sdk
+command: hello
+modules:
+  - name: hello
+    buildsystem: meson
+    sources:
+      - type: file
+        path: meson.build
+      - type: file
+        path: hello.c
