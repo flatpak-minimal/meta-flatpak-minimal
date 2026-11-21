@@ -347,7 +347,7 @@ jobs:
 
       - name: Upload the developer repository
         if: ${{ !cancelled() && env.KEEP == 'true' && hashFiles(format('repo-dev-{0}.tar', matrix.machine)) != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: repo-dev-${{ matrix.machine }}
           path: repo-dev-${{ matrix.machine }}.tar
