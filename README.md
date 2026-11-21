@@ -515,10 +515,12 @@ reviewer and no branch policy. If the key is a repository secret, every
 workflow on every branch can read it.
 
 1. **The environment.** Create `flatpak-signing` (Settings → Environments)
-   before the first release or dispatched run. Add a required reviewer, with
-   "Prevent self-review" on. Under deployment branches and tags, choose
-   "Selected branches and tags" and add two rules: branch `master` and
-   tag `*`.
+   before the first release or dispatched run. Add a required reviewer.
+   Leave "Prevent self-review" off unless there is more than one: with it
+   on, a reviewer cannot approve a run they started, and the maintainer who
+   dispatches the run or publishes the release is usually the only one.
+   Under deployment branches and tags, choose "Selected branches and tags"
+   and add two rules: branch `master` and tag `*`.
 2. **The secret.** Add `FLATPAK_SDK_GPG_KEY` as a secret of that
    environment, never of the repository or the organization.
 3. **The key.** Make a dedicated key with no passphrase, since ostree signs
