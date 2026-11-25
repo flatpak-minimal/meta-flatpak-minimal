@@ -14,12 +14,13 @@ inherit image
 
 # PACKAGE_INSTALL, not IMAGE_INSTALL: whatever a product appends to
 # IMAGE_INSTALL in local.conf must not land in the guest. gnupg is what
-# ostree's gpgme calls to verify signed commits and summaries.
+# ostree's gpgme calls to verify signed commits and summaries; with
+# FLATPAK_OPENPGP = "sequoia" ostree does that itself.
 PACKAGE_INSTALL = " \
     busybox \
     ca-certificates \
     flatpak \
-    gnupg \
+    ${@'' if d.getVar('FLATPAK_OPENPGP') == 'sequoia' else 'gnupg'} \
     ostree \
     tar \
     vfpk-init \

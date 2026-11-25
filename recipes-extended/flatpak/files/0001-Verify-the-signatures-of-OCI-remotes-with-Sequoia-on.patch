@@ -1,0 +1,195 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Wed, 25 Nov 2026 14:53:55 -0800
+Subject: [PATCH] Verify the signatures of OCI remotes with Sequoia on request
+
+The signatures of an OCI remote are OpenPGP messages, which flatpak
+verifies through GPGME, and GPGME by running gpg. Everything else
+flatpak verifies goes through libostree.
+
+-Dsequoia=enabled does it with openpgp-verify-sequoia, a small C
+interface over the Sequoia OpenPGP library, against the same keyring of
+the remote. GPGME is then not needed to build flatpak, and with a
+libostree built the same way neither it nor GnuPG is needed to run it.
+
+Upstream-Status: Pending [prototype; goes with https://github.com/ostreedev/ostree/issues/2304]
+Signed-off-by: Joel Winarske <joel.winarske@linux.com>
+---
+ common/flatpak-oci-signatures.c | 83 +++++++++++++++++++++++++++++++++
+ meson.build                     | 14 +++++-
+ meson_options.txt               |  6 +++
+ 3 files changed, 102 insertions(+), 1 deletion(-)
+
+diff --git a/common/flatpak-oci-signatures.c b/common/flatpak-oci-signatures.c
+index 8dfa842..a73edb0 100644
+--- a/common/flatpak-oci-signatures.c
++++ b/common/flatpak-oci-signatures.c
+@@ -25,15 +25,21 @@
+ #include <gio/gunixoutputstream.h>
+ 
+ #include "libglnx.h"
++#ifdef HAVE_OPENPGP_VERIFY_SEQUOIA
++#include <openpgp-verify-sequoia.h>
++#else
+ #include <gpgme.h>
++#endif
+ 
+ #include "flatpak-oci-signatures-private.h"
+ #include "flatpak-uri-private.h"
+ #include "flatpak-utils-private.h"
+ 
++#ifndef HAVE_OPENPGP_VERIFY_SEQUOIA
+ G_DEFINE_AUTO_CLEANUP_FREE_FUNC (gpgme_data_t, gpgme_data_release, NULL)
+ G_DEFINE_AUTO_CLEANUP_FREE_FUNC (gpgme_ctx_t, gpgme_release, NULL)
+ G_DEFINE_AUTO_CLEANUP_FREE_FUNC (gpgme_key_t, gpgme_key_unref, NULL)
++#endif
+ 
+ gboolean
+ flatpak_remote_has_gpg_key (OstreeRepo   *repo,
+@@ -48,6 +54,8 @@ flatpak_remote_has_gpg_key (OstreeRepo   *repo,
+   return g_file_query_exists (keyring_file, NULL);
+ }
+ 
++#ifndef HAVE_OPENPGP_VERIFY_SEQUOIA
++
+ static void
+ flatpak_gpgme_error_to_gio_error (gpgme_error_t gpg_error,
+                                   GError      **error)
+@@ -258,6 +266,81 @@ flatpak_oci_verify_signature (OstreeRepo *repo,
+   return (FlatpakOciSignature *) g_steal_pointer (&json);
+ }
+ 
++#else /* HAVE_OPENPGP_VERIFY_SEQUOIA */
++
++/* WARNING: This verifies that the data is signed with the correct key, but
++ * does not verify the payload matches what is being installed. The caller
++ * must do that.
++ */
++static FlatpakOciSignature *
++flatpak_oci_verify_signature (OstreeRepo *repo,
++                              const char *remote_name,
++                              GBytes     *signed_data,
++                              GError    **error)
++{
++  g_autofree char *keyring_name = NULL;
++  g_autoptr(GFile) keyring_file = NULL;
++  g_autoptr(GBytes) keyring = NULL;
++  g_autoptr(GError) local_error = NULL;
++  g_autoptr(GBytes) plain_bytes = NULL;
++  g_autoptr(FlatpakJson) json = NULL;
++  OpvBuffer keyrings[1] = { { NULL, 0 } };
++  size_t n_keyrings = 0;
++  OpvSignature *signatures = NULL;
++  size_t n_signatures = 0;
++  uint8_t *content = NULL;
++  size_t content_len = 0;
++  char *message = NULL;
++  gsize signed_data_len;
++  const guint8 *signed_data_bytes = g_bytes_get_data (signed_data, &signed_data_len);
++
++  /* The remote's keyring, as ostree keeps it. Without one nothing verifies. */
++  keyring_name = g_strdup_printf ("%s.trustedkeys.gpg", remote_name);
++  keyring_file = g_file_get_child (ostree_repo_get_path (repo), keyring_name);
++  keyring = g_file_load_bytes (keyring_file, NULL, NULL, &local_error);
++  if (keyring != NULL)
++    {
++      keyrings[0].data = g_bytes_get_data (keyring, &keyrings[0].len);
++      n_keyrings = 1;
++    }
++  else if (!g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
++    {
++      g_propagate_error (error, g_steal_pointer (&local_error));
++      return NULL;
++    }
++
++  if (opv_verify_message (keyrings, n_keyrings, signed_data_bytes, signed_data_len,
++                          &signatures, &n_signatures, &content, &content_len, &message) != 0)
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
++                   "Unable to complete signature verification: %s",
++                   message != NULL ? message : "unknown error");
++      opv_string_free (message);
++      return NULL;
++    }
++
++  opv_signatures_free (signatures, n_signatures);
++
++  /* There is content only if a signature is valid. */
++  if (content == NULL)
++    {
++      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
++                           "GPG signatures found, but none are in trusted keyring");
++      return NULL;
++    }
++
++  plain_bytes = g_bytes_new (content, content_len);
++  opv_bytes_free (content, content_len);
++
++  json = flatpak_json_from_bytes (plain_bytes, FLATPAK_TYPE_OCI_SIGNATURE, error);
++  if (json == NULL)
++    return NULL;
++
++  return (FlatpakOciSignature *) g_steal_pointer (&json);
++}
++
++#endif /* HAVE_OPENPGP_VERIFY_SEQUOIA */
++
+ struct _FlatpakOciSignatures
+ {
+   GPtrArray *signatures;
+diff --git a/meson.build b/meson.build
+index 25dec32..da30b1c 100644
+--- a/meson.build
++++ b/meson.build
+@@ -219,7 +219,14 @@ build_wayland_security_context = wayland_client.found() and wayland_scanner.foun
+ 
+ base_deps = [glib_dep, gio_dep, gio_unix_dep]
+ 
+-gpgme_dep = dependency('gpgme', version : '>=1.8.0')
++# The signatures of OCI remotes are OpenPGP messages. GPGME verifies them by
++# running gpg; openpgp-verify-sequoia does it in the library.
++sequoia_dep = dependency('openpgp-verify-sequoia', required : get_option('sequoia'))
++if sequoia_dep.found()
++  gpgme_dep = sequoia_dep
++else
++  gpgme_dep = dependency('gpgme', version : '>=1.8.0')
++endif
+ 
+ if get_option('selinux_module').disabled()
+   build_selinux_module = false
+@@ -395,6 +402,10 @@ if malcontent_dep.found()
+   cdata.set('HAVE_LIBMALCONTENT', 1)
+ endif
+ 
++if sequoia_dep.found()
++  cdata.set('HAVE_OPENPGP_VERIFY_SEQUOIA', 1)
++endif
++
+ if xau_dep.found()
+   cdata.set('ENABLE_XAUTH', 1)
+ endif
+@@ -439,6 +450,7 @@ summary(
+     'Use dconf' : dconf_dep.found(),
+     'Use libsystemd' : libsystemd_dep.found(),
+     'Use libmalcontent' : malcontent_dep.found(),
++    'Verify OpenPGP signatures with Sequoia' : sequoia_dep.found(),
+     'Use libzstd' : libzstd_dep.found(),
+     'Use auto sideloading' : get_option('auto_sideloading'),
+     'Wayland security context' : build_wayland_security_context,
+diff --git a/meson_options.txt b/meson_options.txt
+index 7f6e475..3fad816 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -127,6 +127,12 @@ option(
+   description : 'enable selinux module for system-helper',
+   value : 'auto',
+ )
++option(
++  'sequoia',
++  type : 'feature',
++  description : 'verify OpenPGP signatures with openpgp-verify-sequoia in place of GPGME',
++  value : 'disabled',
++)
+ option(
+   'system_bubblewrap',
+   type : 'string',

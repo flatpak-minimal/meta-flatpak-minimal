@@ -1,0 +1,671 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Wed, 25 Nov 2026 14:24:53 -0800
+Subject: [PATCH] Add a Sequoia backend for OpenPGP signature verification
+
+libostree verifies OpenPGP signatures through GPGME, which runs gpg. That
+puts GnuPG, which is GPL-3.0-only, on every device that pulls from a
+signed remote.
+
+--with-sequoia builds the same GPG code paths on openpgp-verify-sequoia,
+a small C interface over the Sequoia OpenPGP library (LGPL-2.0-or-later),
+in place of GPGME. Covered are what a device needs: checking detached
+signatures against the keyrings of a remote, with the results that the
+OstreeGpgVerifyResult API reports, and importing keys into the keyring
+of a remote. Signing, listing keys and importing from the keyring of
+the user are not, and fail saying so: they are done where gpg is.
+
+A signature is valid only while its key and certificate are neither
+expired nor revoked, as gpg has it. Sequoia's standard policy applies,
+which unlike gpg rejects SHA-1 data signatures.
+
+test-gpg-verify-result reads the GPGME result and is not built.
+
+Upstream-Status: Pending [prototype for https://github.com/ostreedev/ostree/issues/2304]
+Signed-off-by: Joel Winarske <joel.winarske@linux.com>
+---
+ Makefile-tests.am                             |   4 +
+ configure.ac                                  |  17 ++
+ src/libostree/ostree-gpg-verifier.c           | 107 ++++++++++
+ .../ostree-gpg-verify-result-private.h        |   9 +
+ src/libostree/ostree-gpg-verify-result.c      | 198 ++++++++++++++++++
+ src/libostree/ostree-repo.c                   |  99 ++++++++-
+ src/libotutil/ot-gpg-utils.c                  |   3 +
+ src/libotutil/ot-gpg-utils.h                  |   4 +
+ 8 files changed, 437 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile-tests.am b/Makefile-tests.am
+index e62d45d..32b8ef0 100644
+--- a/Makefile-tests.am
++++ b/Makefile-tests.am
+@@ -295,10 +295,12 @@ _installed_or_uninstalled_test_programs = tests/test-varint tests/test-ot-unix-u
+ 	tests/test-rfc2616-dates tests/test-pem
+ 
+ if USE_GPGME
++if !USE_SEQUOIA
+ _installed_or_uninstalled_test_programs += \
+ 	tests/test-gpg-verify-result \
+ 	$(NULL)
+ endif
++endif
+ 
+ if USE_LIBSOUP_OR_LIBSOUP3
+ test_extra_programs += ostree-trivial-httpd
+@@ -440,11 +442,13 @@ tests_test_commit_sign_sh_ext_CFLAGS = $(TESTS_CFLAGS)
+ tests_test_commit_sign_sh_ext_LDADD = $(TESTS_LDADD)
+ 
+ if USE_GPGME
++if !USE_SEQUOIA
+ tests_test_gpg_verify_result_SOURCES = \
+ 	src/libostree/ostree-gpg-verify-result-private.h \
+ 	tests/test-gpg-verify-result.c
+ tests_test_gpg_verify_result_CFLAGS = $(TESTS_CFLAGS) $(OT_INTERNAL_GPGME_CFLAGS)
+ tests_test_gpg_verify_result_LDADD = $(TESTS_LDADD) $(OT_INTERNAL_GPGME_LIBS)
++endif
+ 
+ EXTRA_DIST += \
+ 	tests/gpg-verify-data/README.md \
+diff --git a/configure.ac b/configure.ac
+index b4f5d7b..255b7e2 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -265,6 +265,14 @@ LIBGPGME_PTHREAD_DEPENDENCY="1.1.8"
+ AC_ARG_WITH(gpgme,
+ 	    AS_HELP_STRING([--with-gpgme], [Use gpgme @<:@default=yes@:>@]),
+ 	    [], [with_gpgme=yes])
++AC_ARG_WITH(sequoia,
++	    AS_HELP_STRING([--with-sequoia], [Verify OpenPGP signatures with Sequoia in place of gpgme @<:@default=no@:>@]),
++	    [], [with_sequoia=no])
++AS_IF([test x$with_sequoia = xyes], [
++    dnl The GPG code paths stay as they are; only what is behind them changes.
++    with_gpgme=no
++    PKG_CHECK_MODULES([OT_DEP_SEQUOIA], [openpgp-verify-sequoia])
++])
+ AS_IF([test x$with_gpgme != xno], [
+     have_gpgme=yes
+     PKG_CHECK_MODULES([OT_DEP_GPGME], [gpgme >= $LIBGPGME_DEPENDENCY gpg-error], [
+@@ -306,6 +314,15 @@ dnl to link to it directly.
+ AS_IF([test x$with_gpgme != xno && test x$have_gpgme != xyes],
+       [AC_MSG_ERROR([Need GPGME_PTHREAD and GPG_ERROR])]
+ )
++AS_IF([test x$with_sequoia = xyes], [
++    have_gpgme=yes
++    OT_DEP_GPGME_CFLAGS="${OT_DEP_SEQUOIA_CFLAGS}"
++    OT_DEP_GPGME_LIBS="${OT_DEP_SEQUOIA_LIBS}"
++    REQUIRES_PRIVATE="${REQUIRES_PRIVATE} openpgp-verify-sequoia"
++    AC_DEFINE([OSTREE_GPG_SEQUOIA], 1, [Define to verify OpenPGP signatures with Sequoia in place of gpgme])
++    OSTREE_FEATURES="$OSTREE_FEATURES sequoia"
++])
++AM_CONDITIONAL(USE_SEQUOIA, test "x$with_sequoia" = xyes)
+ AS_IF([test x$have_gpgme = xyes],
+     [ OSTREE_FEATURES="$OSTREE_FEATURES gpgme" ],
+     [
+diff --git a/src/libostree/ostree-gpg-verifier.c b/src/libostree/ostree-gpg-verifier.c
+index 90aa481..5e0863c 100644
+--- a/src/libostree/ostree-gpg-verifier.c
++++ b/src/libostree/ostree-gpg-verifier.c
+@@ -68,8 +68,10 @@ _ostree_gpg_verifier_class_init (OstreeGpgVerifierClass *klass)
+ 
+   object_class->finalize = ostree_gpg_verifier_finalize;
+ 
++#ifndef OSTREE_GPG_SEQUOIA
+   /* Initialize GPGME */
+   gpgme_check_version (NULL);
++#endif
+ }
+ 
+ static void
+@@ -78,6 +80,8 @@ _ostree_gpg_verifier_init (OstreeGpgVerifier *self)
+   self->keyring_data = g_ptr_array_new_with_free_func ((GDestroyNotify)g_bytes_unref);
+ }
+ 
++#ifndef OSTREE_GPG_SEQUOIA
++
+ static void
+ verify_result_finalized_cb (gpointer data, GObject *finalized_verify_result)
+ {
+@@ -348,6 +352,109 @@ out:
+   return result;
+ }
+ 
++#else /* OSTREE_GPG_SEQUOIA */
++
++/* Read every keyring the verifier was given: the keyring files, the keyring
++ * data and the ASCII key files, in that order. */
++static gboolean
++_ostree_gpg_verifier_load_keyrings (OstreeGpgVerifier *self, GPtrArray **out_keyrings,
++                                    GCancellable *cancellable, GError **error)
++{
++  g_autoptr (GPtrArray) keyrings = g_ptr_array_new_with_free_func ((GDestroyNotify)g_bytes_unref);
++
++  for (GList *link = self->keyrings; link != NULL; link = link->next)
++    {
++      GFile *keyring_file = link->data;
++      g_autoptr (GError) local_error = NULL;
++      g_autoptr (GBytes) bytes = g_file_load_bytes (keyring_file, cancellable, NULL, &local_error);
++
++      if (bytes == NULL)
++        {
++          /* Disregard non-existent keyrings. */
++          if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
++            continue;
++          g_propagate_error (error, g_steal_pointer (&local_error));
++          return FALSE;
++        }
++
++      g_ptr_array_add (keyrings, g_steal_pointer (&bytes));
++    }
++
++  for (guint i = 0; i < self->keyring_data->len; i++)
++    g_ptr_array_add (keyrings, g_bytes_ref (self->keyring_data->pdata[i]));
++
++  if (self->key_ascii_files)
++    {
++      for (guint i = 0; i < self->key_ascii_files->len; i++)
++        {
++          const char *path = self->key_ascii_files->pdata[i];
++          glnx_autofd int fd = -1;
++
++          if (!glnx_openat_rdonly (AT_FDCWD, path, TRUE, &fd, error))
++            return FALSE;
++
++          g_autoptr (GBytes) bytes = glnx_fd_readall_bytes (fd, cancellable, error);
++          if (bytes == NULL)
++            return FALSE;
++
++          g_ptr_array_add (keyrings, g_steal_pointer (&bytes));
++        }
++    }
++
++  *out_keyrings = g_steal_pointer (&keyrings);
++  return TRUE;
++}
++
++gboolean
++_ostree_gpg_verifier_list_keys (OstreeGpgVerifier *self, const char *const *key_ids,
++                                GPtrArray **out_keys, GCancellable *cancellable, GError **error)
++{
++  return glnx_throw (error, "GPG: Listing keys is not supported with Sequoia");
++}
++
++OstreeGpgVerifyResult *
++_ostree_gpg_verifier_check_signature (OstreeGpgVerifier *self, GBytes *signed_data,
++                                      GBytes *signatures, GCancellable *cancellable, GError **error)
++{
++  GLNX_AUTO_PREFIX_ERROR ("GPG", error);
++
++  if (g_cancellable_set_error_if_cancelled (cancellable, error))
++    return NULL;
++
++  g_autoptr (GPtrArray) keyrings = NULL;
++  if (!_ostree_gpg_verifier_load_keyrings (self, &keyrings, cancellable, error))
++    return NULL;
++
++  g_autofree OpvBuffer *buffers = g_new0 (OpvBuffer, keyrings->len + 1);
++  for (guint i = 0; i < keyrings->len; i++)
++    buffers[i].data = g_bytes_get_data (keyrings->pdata[i], &buffers[i].len);
++
++  OstreeGpgVerifyResult *result
++      = g_initable_new (OSTREE_TYPE_GPG_VERIFY_RESULT, cancellable, error, NULL);
++  if (result == NULL)
++    return NULL;
++
++  gsize data_len;
++  const guint8 *data = g_bytes_get_data (signed_data, &data_len);
++  gsize signatures_len;
++  const guint8 *signatures_data = g_bytes_get_data (signatures, &signatures_len);
++  char *message = NULL;
++
++  if (opv_verify (buffers, keyrings->len, data, data_len, signatures_data, signatures_len,
++                     &result->signatures, &result->n_signatures, &message)
++      != 0)
++    {
++      glnx_throw (error, "%s", message ?: "Unable to complete signature verification");
++      opv_string_free (message);
++      g_object_unref (result);
++      return NULL;
++    }
++
++  return result;
++}
++
++#endif /* OSTREE_GPG_SEQUOIA */
++
+ /* Given @path which should contain a GPG keyring file, add it
+  * to the list of trusted keys.
+  */
+diff --git a/src/libostree/ostree-gpg-verify-result-private.h b/src/libostree/ostree-gpg-verify-result-private.h
+index a6b2208..1d44c4a 100644
+--- a/src/libostree/ostree-gpg-verify-result-private.h
++++ b/src/libostree/ostree-gpg-verify-result-private.h
+@@ -23,6 +23,10 @@
+ 
+ #include "otutil.h"
+ 
++#ifdef OSTREE_GPG_SEQUOIA
++#include <openpgp-verify-sequoia.h>
++#endif
++
+ /**
+  * OstreeGpgVerifyResult:
+  *
+@@ -32,6 +36,11 @@ struct OstreeGpgVerifyResult
+ {
+   GObject parent;
+ 
++#ifdef OSTREE_GPG_SEQUOIA
++  OpvSignature *signatures;
++  size_t n_signatures;
++#else
+   gpgme_ctx_t context;
+   gpgme_verify_result_t details;
++#endif
+ };
+diff --git a/src/libostree/ostree-gpg-verify-result.c b/src/libostree/ostree-gpg-verify-result.c
+index 4b7bd47..df7809d 100644
+--- a/src/libostree/ostree-gpg-verify-result.c
++++ b/src/libostree/ostree-gpg-verify-result.c
+@@ -75,6 +75,8 @@ G_DEFINE_TYPE_WITH_CODE (OstreeGpgVerifyResult, ostree_gpg_verify_result, G_TYPE
+                          G_IMPLEMENT_INTERFACE (G_TYPE_INITABLE,
+                                                 ostree_gpg_verify_result_initable_iface_init))
+ 
++#ifndef OSTREE_GPG_SEQUOIA
++
+ static gboolean
+ signature_is_valid (gpgme_signature_t signature)
+ {
+@@ -448,6 +450,202 @@ ostree_gpg_verify_result_get (OstreeGpgVerifyResult *result, guint signature_ind
+   return g_variant_builder_end (&builder);
+ }
+ 
++#else /* OSTREE_GPG_SEQUOIA */
++
++static void
++ostree_gpg_verify_result_finalize (GObject *object)
++{
++  OstreeGpgVerifyResult *result = OSTREE_GPG_VERIFY_RESULT (object);
++
++  opv_signatures_free (result->signatures, result->n_signatures);
++
++  G_OBJECT_CLASS (ostree_gpg_verify_result_parent_class)->finalize (object);
++}
++
++static gboolean
++ostree_gpg_verify_result_initable_init (GInitable *initable, GCancellable *cancellable,
++                                        GError **error)
++{
++  return TRUE;
++}
++
++static void
++ostree_gpg_verify_result_class_init (OstreeGpgVerifyResultClass *class)
++{
++  GObjectClass *object_class;
++
++  object_class = G_OBJECT_CLASS (class);
++  object_class->finalize = ostree_gpg_verify_result_finalize;
++}
++
++static void
++ostree_gpg_verify_result_init (OstreeGpgVerifyResult *result)
++{
++}
++
++static void
++ostree_gpg_verify_result_initable_iface_init (GInitableIface *iface)
++{
++  iface->init = ostree_gpg_verify_result_initable_init;
++}
++
++guint
++ostree_gpg_verify_result_count_all (OstreeGpgVerifyResult *result)
++{
++  g_return_val_if_fail (OSTREE_IS_GPG_VERIFY_RESULT (result), 0);
++
++  return (guint)result->n_signatures;
++}
++
++guint
++ostree_gpg_verify_result_count_valid (OstreeGpgVerifyResult *result)
++{
++  guint count = 0;
++
++  g_return_val_if_fail (OSTREE_IS_GPG_VERIFY_RESULT (result), 0);
++
++  for (size_t i = 0; i < result->n_signatures; i++)
++    {
++      if (result->signatures[i].valid)
++        count++;
++    }
++
++  return count;
++}
++
++gboolean
++ostree_gpg_verify_result_lookup (OstreeGpgVerifyResult *result, const gchar *key_id,
++                                 guint *out_signature_index)
++{
++  g_return_val_if_fail (OSTREE_IS_GPG_VERIFY_RESULT (result), FALSE);
++  g_return_val_if_fail (key_id != NULL, FALSE);
++
++  /* As gpg takes it: a key ID or a fingerprint, of the primary key or of
++   * any subkey of the certificate that signed. */
++  if (g_str_has_prefix (key_id, "0x") || g_str_has_prefix (key_id, "0X"))
++    key_id += 2;
++  g_autofree char *id = g_ascii_strup (key_id, -1);
++  if (strlen (id) < 8)
++    return FALSE;
++
++  for (size_t i = 0; i < result->n_signatures; i++)
++    {
++      const OpvSignature *signature = &result->signatures[i];
++
++      if (signature->cert_fingerprints == NULL)
++        continue;
++
++      g_auto (GStrv) fingerprints = g_strsplit (signature->cert_fingerprints, " ", -1);
++      for (char **fpr = fingerprints; *fpr != NULL; fpr++)
++        {
++          if (**fpr != '\0' && g_str_has_suffix (*fpr, id))
++            {
++              if (out_signature_index != NULL)
++                *out_signature_index = (guint)i;
++              /* Note early return */
++              return TRUE;
++            }
++        }
++    }
++
++  return FALSE;
++}
++
++GVariant *
++ostree_gpg_verify_result_get (OstreeGpgVerifyResult *result, guint signature_index,
++                              OstreeGpgSignatureAttr *attrs, guint n_attrs)
++{
++  GVariantBuilder builder;
++
++  g_return_val_if_fail (OSTREE_IS_GPG_VERIFY_RESULT (result), NULL);
++  g_return_val_if_fail (attrs != NULL, NULL);
++  g_return_val_if_fail (n_attrs > 0, NULL);
++  g_return_val_if_fail (signature_index < result->n_signatures, NULL);
++
++  const OpvSignature *signature = &result->signatures[signature_index];
++
++  g_variant_builder_init (&builder, G_VARIANT_TYPE_TUPLE);
++
++  for (guint ii = 0; ii < n_attrs; ii++)
++    {
++      GVariant *child;
++
++      switch (attrs[ii])
++        {
++        case OSTREE_GPG_SIGNATURE_ATTR_VALID:
++          child = g_variant_new_boolean (signature->valid != 0);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_SIG_EXPIRED:
++          child = g_variant_new_boolean (signature->sig_expired != 0);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_KEY_EXPIRED:
++          child = g_variant_new_boolean (signature->key_expired != 0);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_KEY_REVOKED:
++          child = g_variant_new_boolean (signature->key_revoked != 0);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_KEY_MISSING:
++          child = g_variant_new_boolean (signature->key_missing != 0);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_FINGERPRINT:
++          child = g_variant_new_string (signature->fingerprint ?: "");
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_TIMESTAMP:
++          child = g_variant_new_int64 (signature->timestamp);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_EXP_TIMESTAMP:
++          child = g_variant_new_int64 (signature->exp_timestamp);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_PUBKEY_ALGO_NAME:
++          child = g_variant_new_string (signature->pubkey_algo_name ?: "[unknown name]");
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_HASH_ALGO_NAME:
++          child = g_variant_new_string (signature->hash_algo_name ?: "[unknown name]");
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_USER_NAME:
++          child = g_variant_new_string (signature->user_name ?: "[unknown name]");
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_USER_EMAIL:
++          child = g_variant_new_string (signature->user_email ?: "[unknown email]");
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_FINGERPRINT_PRIMARY:
++          child = g_variant_new_string (signature->fingerprint_primary ?: "");
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_KEY_EXP_TIMESTAMP:
++          child = g_variant_new_int64 (signature->key_exp_timestamp);
++          break;
++
++        case OSTREE_GPG_SIGNATURE_ATTR_KEY_EXP_TIMESTAMP_PRIMARY:
++          child = g_variant_new_int64 (signature->key_exp_timestamp_primary);
++          break;
++
++        default:
++          g_critical ("Invalid signature attribute (%d)", attrs[ii]);
++          g_variant_builder_clear (&builder);
++          return NULL;
++        }
++
++      g_variant_builder_add_value (&builder, child);
++    }
++
++  return g_variant_builder_end (&builder);
++}
++
++#endif /* OSTREE_GPG_SEQUOIA */
++
+ /**
+  * ostree_gpg_verify_result_get_all:
+  * @result: an #OstreeGpgVerifyResult
+diff --git a/src/libostree/ostree-repo.c b/src/libostree/ostree-repo.c
+index f20611b..f6ed0e2 100644
+--- a/src/libostree/ostree-repo.c
++++ b/src/libostree/ostree-repo.c
+@@ -36,6 +36,9 @@
+ #include "ostree-autocleanups.h"
+ #include "ostree-core-private.h"
+ #include "ostree-gpg-verifier.h"
++#ifdef OSTREE_GPG_SEQUOIA
++#include <openpgp-verify-sequoia.h>
++#endif
+ #include "ostree-remote-private.h"
+ #include "ostree-repo-file-enumerator.h"
+ #include "ostree-repo-file.h"
+@@ -1308,7 +1311,7 @@ ostree_repo_init (OstreeRepo *self)
+     { "invalid-cache", OSTREE_REPO_TEST_ERROR_INVALID_CACHE },
+   };
+ 
+-#ifndef OSTREE_DISABLE_GPGME
++#if !defined(OSTREE_DISABLE_GPGME) && !defined(OSTREE_GPG_SEQUOIA)
+   static gsize gpgme_initialized;
+ 
+   if (g_once_init_enter (&gpgme_initialized))
+@@ -2157,6 +2160,81 @@ ostree_repo_remote_get_gpg_verify_summary (OstreeRepo *self, const char *name,
+                                                 out_gpg_verify_summary, error);
+ }
+ 
++#ifdef OSTREE_GPG_SEQUOIA
++/* ostree_repo_remote_gpg_import() without gpg: merge the keys into the
++ * remote's keyring file directly. */
++static gboolean
++remote_gpg_import_sequoia (OstreeRepo *self, const char *name, GInputStream *source_stream,
++                           const char *const *key_ids, guint *out_imported,
++                           GCancellable *cancellable, GError **error)
++{
++  GLNX_AUTO_PREFIX_ERROR ("GPG", error);
++
++  g_return_val_if_fail (OSTREE_IS_REPO (self), FALSE);
++  g_return_val_if_fail (name != NULL, FALSE);
++
++  /* gpg read the user's own keyring here; without gpg there is none. */
++  if (source_stream == NULL)
++    return glnx_throw (error, "Importing from the user's keyring is not supported with Sequoia");
++
++  /* First make sure the remote name is valid. */
++  OstreeRemote *remote = _ostree_repo_get_remote_inherited (self, name, error);
++  if (remote == NULL)
++    return FALSE;
++  g_autofree char *keyring_path = g_strdup (remote->keyring);
++  ostree_remote_unref (remote);
++
++  g_autoptr (GOutputStream) source_out = g_memory_output_stream_new_resizable ();
++  if (g_output_stream_splice (source_out, source_stream, G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET,
++                              cancellable, error)
++      < 0)
++    return FALSE;
++  g_autoptr (GBytes) source
++      = g_memory_output_stream_steal_as_bytes (G_MEMORY_OUTPUT_STREAM (source_out));
++
++  g_autoptr (GBytes) keyring = NULL;
++  glnx_autofd int fd = -1;
++  if (!ot_openat_ignore_enoent (self->repo_dir_fd, keyring_path, &fd, error))
++    return glnx_prefix_error (error, "Unable to read remote's keyring");
++  if (fd >= 0)
++    {
++      keyring = glnx_fd_readall_bytes (fd, cancellable, error);
++      if (keyring == NULL)
++        return glnx_prefix_error (error, "Unable to read remote's keyring");
++    }
++
++  gsize keyring_len = 0;
++  const guint8 *keyring_data = keyring ? g_bytes_get_data (keyring, &keyring_len) : NULL;
++  gsize source_len;
++  const guint8 *source_data = g_bytes_get_data (source, &source_len);
++  guint8 *new_keyring = NULL;
++  gsize new_keyring_len = 0;
++  unsigned int imported = 0;
++  char *message = NULL;
++
++  if (opv_keyring_import (keyring_data, keyring_len, source_data, source_len, key_ids,
++                             &new_keyring, &new_keyring_len, &imported, &message)
++      != 0)
++    {
++      glnx_throw (error, "%s", message ?: "Unable to import keys");
++      opv_string_free (message);
++      return FALSE;
++    }
++
++  /* All imports were successful; replace the remote's old keyring. */
++  gboolean replaced = glnx_file_replace_contents_at (self->repo_dir_fd, keyring_path, new_keyring,
++                                                     new_keyring_len, 0, cancellable, error);
++  opv_bytes_free (new_keyring, new_keyring_len);
++  if (!replaced)
++    return FALSE;
++
++  if (out_imported != NULL)
++    *out_imported = imported;
++
++  return TRUE;
++}
++#endif /* OSTREE_GPG_SEQUOIA */
++
+ /**
+  * ostree_repo_remote_gpg_import:
+  * @self: Self
+@@ -2184,7 +2262,10 @@ ostree_repo_remote_gpg_import (OstreeRepo *self, const char *name, GInputStream
+                                const char *const *key_ids, guint *out_imported,
+                                GCancellable *cancellable, GError **error)
+ {
+-#ifndef OSTREE_DISABLE_GPGME
++#if defined(OSTREE_GPG_SEQUOIA)
++  return remote_gpg_import_sequoia (self, name, source_stream, key_ids, out_imported, cancellable,
++                                    error);
++#elif !defined(OSTREE_DISABLE_GPGME)
+   OstreeRemote *remote;
+   g_auto (gpgme_ctx_t) source_context = NULL;
+   g_auto (gpgme_ctx_t) target_context = NULL;
+@@ -2456,7 +2537,9 @@ gboolean
+ ostree_repo_remote_get_gpg_keys (OstreeRepo *self, const char *name, const char *const *key_ids,
+                                  GPtrArray **out_keys, GCancellable *cancellable, GError **error)
+ {
+-#ifndef OSTREE_DISABLE_GPGME
++#if defined(OSTREE_GPG_SEQUOIA)
++  return glnx_throw (error, "GPG: Listing keys is not supported with Sequoia");
++#elif !defined(OSTREE_DISABLE_GPGME)
+   g_autoptr (OstreeGpgVerifier) verifier = NULL;
+   gboolean global_keyrings = (name == NULL);
+   if (!_ostree_repo_gpg_prepare_verifier (self, name, NULL, NULL, global_keyrings, &verifier,
+@@ -5154,7 +5237,15 @@ ostree_repo_append_gpg_signature (OstreeRepo *self, const gchar *commit_checksum
+ #endif /* OSTREE_DISABLE_GPGME */
+ }
+ 
+-#ifndef OSTREE_DISABLE_GPGME
++#if defined(OSTREE_GPG_SEQUOIA)
++/* Verification only: signing happens where the key is, with gpg. */
++static gboolean
++sign_data (OstreeRepo *self, GBytes *input_data, const gchar *key_id, const gchar *homedir,
++           GBytes **out_signature, GCancellable *cancellable, GError **error)
++{
++  return glnx_throw (error, "GPG: Signing is not supported with Sequoia");
++}
++#elif !defined(OSTREE_DISABLE_GPGME)
+ static gboolean
+ sign_data (OstreeRepo *self, GBytes *input_data, const gchar *key_id, const gchar *homedir,
+            GBytes **out_signature, GCancellable *cancellable, GError **error)
+diff --git a/src/libotutil/ot-gpg-utils.c b/src/libotutil/ot-gpg-utils.c
+index bb91a77..8ca335f 100644
+--- a/src/libotutil/ot-gpg-utils.c
++++ b/src/libotutil/ot-gpg-utils.c
+@@ -29,6 +29,7 @@
+ #include <gio/gunixoutputstream.h>
+ 
+ /* Like glnx_throw_errno_prefix, but takes @gpg_error */
++#ifndef OSTREE_GPG_SEQUOIA
+ gboolean
+ ot_gpgme_throw (gpgme_error_t gpg_error, GError **error, const char *fmt, ...)
+ {
+@@ -514,6 +515,8 @@ ot_gpgme_kill_agent (const char *homedir)
+ /* Takes the SHA1 checksum of the local component of an email address and
+  * returns the zbase32 encoding.
+  */
++#endif /* !OSTREE_GPG_SEQUOIA */
++
+ static char *
+ encode_wkd_local (const char *local)
+ {
+diff --git a/src/libotutil/ot-gpg-utils.h b/src/libotutil/ot-gpg-utils.h
+index 039a2f3..30aca19 100644
+--- a/src/libotutil/ot-gpg-utils.h
++++ b/src/libotutil/ot-gpg-utils.h
+@@ -21,10 +21,13 @@
+ 
+ #include "libglnx.h"
+ #include <gio/gio.h>
++#ifndef OSTREE_GPG_SEQUOIA
+ #include <gpgme.h>
++#endif
+ 
+ G_BEGIN_DECLS
+ 
++#ifndef OSTREE_GPG_SEQUOIA
+ G_DEFINE_AUTO_CLEANUP_FREE_FUNC (gpgme_data_t, gpgme_data_release, NULL)
+ G_DEFINE_AUTO_CLEANUP_FREE_FUNC (gpgme_ctx_t, gpgme_release, NULL)
+ G_DEFINE_AUTO_CLEANUP_FREE_FUNC (gpgme_key_t, gpgme_key_unref, NULL)
+@@ -42,6 +45,7 @@ gpgme_data_t ot_gpgme_data_output (GOutputStream *output_stream);
+ gpgme_ctx_t ot_gpgme_new_ctx (const char *homedir, GError **error);
+ 
+ void ot_gpgme_kill_agent (const char *homedir);
++#endif /* !OSTREE_GPG_SEQUOIA */
+ 
+ gboolean ot_gpg_wkd_urls (const char *email, char **out_advanced_url, char **out_direct_url,
+                           GError **error);
