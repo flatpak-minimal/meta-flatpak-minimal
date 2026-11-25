@@ -3,8 +3,8 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# The SDK developers build apps against with flatpak-builder, and the
-# developer repository it is published in.
+# The SDK developers build apps against with flatpak-builder, the Platform
+# their apps run on, and the developer repository the SDK is published in.
 #
 #   oe-selftest -r flatpak_sdk
 
@@ -49,6 +49,17 @@ class FlatpakSdkTests(OESelftestTestCase):
                       metadata, msg='the SDK does not name the Platform:\n%s' % metadata)
         for tool in ('gcc', 'cmake', 'meson', 'ninja', 'pkg-config', 'python3', 'eu-strip', 'debugedit'):
             self.ostree(repo, 'ls', refs[0], '/files/bin/%s' % tool)
+
+    def test_platform_has_flatpak_spawn(self):
+        """The Platform carries flatpak-spawn, which apps expect from their runtime."""
+        bitbake('flatpak-platform-runtime-image')
+        v = get_bb_vars(['FLATPAK_DEPLOY_DIR', 'FLATPAK_DEPLOY_ARCH'], 'flatpak-platform-runtime-image')
+        repo = os.path.join(v['FLATPAK_DEPLOY_DIR'], 'refs', v['FLATPAK_DEPLOY_ARCH'],
+                            'flatpak-platform-runtime-image', 'repo')
+        bitbake('ostree-native -c addto_recipe_sysroot')
+        refs = [r for r in self.ostree(repo, 'refs').split() if '.Platform/' in r]
+        self.assertEqual(len(refs), 1, msg='expected one Platform ref, found %s' % refs)
+        self.ostree(repo, 'ls', refs[0], '/files/bin/flatpak-spawn')
 
     def test_publish_url_needs_signing_key(self):
         """A published remote file carries the signing key, so a URL without one is refused."""
