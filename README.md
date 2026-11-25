@@ -583,7 +583,7 @@ extensions:
 
 | Recipe | Content |
 | --- | --- |
-| `flatpak-platform-runtime-image` | `runtime/org.flatpak_minimal.Platform/<arch>/<release>`: Wayland, Mesa, GLib, GStreamer, fonts, certificates, sqlite |
+| `flatpak-platform-runtime-image` | `runtime/org.flatpak_minimal.Platform/<arch>/<release>`: Wayland, Mesa, GLib, GStreamer, fonts, certificates, sqlite, flatpak-spawn and xdg-open (flatpak-xdg-utils) |
 | `flatpak-platform-runtime` | that runtime, packaged |
 | `flatpak-platform-sdk-image` | `runtime/org.flatpak_minimal.Sdk/<arch>/<release>`: the runtime's packages plus their development files, GCC, cmake, ninja, pkg-config |
 | `flutter-homescreen-extension-image` | `runtime/org.flatpak_minimal.Flutter.Homescreen/<arch>/<release>`: ivi-homescreen, its plugin library and libc++ (meta-flutter) |

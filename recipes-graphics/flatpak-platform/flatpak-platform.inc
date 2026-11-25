@@ -18,6 +18,7 @@ FLATPAK_RUNTIME_BRANCH = "${FLATPAK_PLATFORM_BRANCH}"
 FLATPAK_PLATFORM_PACKAGES = "\
     busybox \
     ca-certificates \
+    flatpak-xdg-utils \
     fontconfig \
     glib-2.0 \
     gstreamer1.0 \
