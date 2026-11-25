@@ -132,7 +132,7 @@ def flatpak_runtime_packages(d):
     import oe.packagedata
 
     packages = {}
-    with open(d.getVar('IMAGE_MANIFEST')) as f:
+    with open(flatpak_image_manifest(d)) as f:
         for line in f:
             if line.strip():
                 pkg = line.split()[0]

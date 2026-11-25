@@ -114,7 +114,7 @@ def flatpak_extension_packages(d):
 
     recipes = (d.getVar('FLATPAK_EXTENSION_EXCLUDE_RECIPES') or '').split()
     packages = {}
-    with open(d.getVar('IMAGE_MANIFEST')) as f:
+    with open(flatpak_image_manifest(d)) as f:
         for line in f:
             if line.strip() and line.split()[0] not in base:
                 pkg = line.split()[0]

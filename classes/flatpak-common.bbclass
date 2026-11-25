@@ -182,3 +182,24 @@ python () {
                  "feature: flatpak cannot update an installation on a read-only filesystem. "
                  "Use 'partition' or 'seed'.")
 }
+
+def flatpak_image_manifest(d):
+    """The manifest do_rootfs wrote for this image.
+
+    IMAGE_MANIFEST carries the current bitbake run's DATETIME, so it names no
+    file when do_rootfs ran in an earlier run and only the image tasks after it
+    run now. The IMAGE_LINK_NAME link beside it points at the manifest that was
+    actually written. With neither there, fail naming the paths looked at,
+    rather than with a FileNotFoundError on one of them."""
+    looked = []
+    link = d.getVar('IMAGE_LINK_NAME')
+    if link:
+        path = os.path.join(d.getVar('IMGDEPLOYDIR'), link + '.manifest')
+        if os.path.exists(path):
+            return path
+        looked.append(path)
+    manifest = d.getVar('IMAGE_MANIFEST')
+    if not os.path.exists(manifest):
+        looked.append(manifest)
+        bb.fatal("No image manifest from do_rootfs; looked for %s" % " and ".join(looked))
+    return manifest
