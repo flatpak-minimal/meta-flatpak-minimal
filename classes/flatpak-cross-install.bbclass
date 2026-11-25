@@ -74,12 +74,16 @@ FLATPAK_INSTALLED_REFS = "${datadir}/vfpk/installed.refs"
 FLATPAK_INSTALLED_SCOPE = "${datadir}/vfpk/installed.scope"
 
 FLATPAK_DATA_IMAGE = "${IMGDEPLOYDIR}/${IMAGE_NAME}.vfpk-data.ext4"
+# What wic reads. IMAGE_NAME carries the bitbake run's DATETIME, and the wks
+# file can be written in a later run than the one do_rootfs built the image
+# in; the link's name is the same in both.
+FLATPAK_DATA_IMAGE_LINK = "${IMGDEPLOYDIR}/${@d.getVar('IMAGE_LINK_NAME') or d.getVar('IMAGE_NAME')}.vfpk-data.ext4"
 FLATPAK_DATA_LABEL ??= "flatpak"
 # GPT type that systemd-repart matches. Our own, so it never matches root.
 FLATPAK_DATA_PART_TYPE ??= "E660927D-BA40-4163-B8FA-67D21924F4EB"
 # wic line for the data partition. No mount point or --ondisk: the class
 # writes the fstab entries. wic only sets --part-type on GPT.
-FLATPAK_DATA_WKS_PART ??= 'part --source rawcopy --sourceparams="file=${FLATPAK_DATA_IMAGE}" --fstype=ext4 --label ${FLATPAK_DATA_LABEL} --align 4096 --no-fstab-update${@' --part-type ' + d.getVar('FLATPAK_DATA_PART_TYPE') if d.getVar('FLATPAK_DATA_GROW') == '1' else ''}'
+FLATPAK_DATA_WKS_PART ??= 'part --source rawcopy --sourceparams="file=${FLATPAK_DATA_IMAGE_LINK}" --fstype=ext4 --label ${FLATPAK_DATA_LABEL} --align 4096 --no-fstab-update${@' --part-type ' + d.getVar('FLATPAK_DATA_PART_TYPE') if d.getVar('FLATPAK_DATA_GROW') == '1' else ''}'
 # The machine's layout for flatpak-data.wks.in, named as WKS_FILE takes it.
 FLATPAK_DATA_BASE_WKS ??= ""
 FLATPAK_DATA_EXTRA_SPACE ??= "1024"
@@ -773,12 +777,11 @@ def flatpak_make_data_image(d, tree):
                     '-E', 'hash_seed=%s,root_owner=0:0' % fs_uuid,
                     '-d', tree, image, '%dM' % size_mb], unload_pseudo=False)
     flatpak_run(d, ['e2fsck', '-fn', image], unload_pseudo=False)
-    link = d.getVar('IMAGE_LINK_NAME')
-    if link:
-        path = os.path.join(d.getVar('IMGDEPLOYDIR'), link + '.vfpk-data.ext4')
-        if os.path.lexists(path):
-            os.unlink(path)
-        os.symlink(os.path.basename(image), path)
+    link = d.getVar('FLATPAK_DATA_IMAGE_LINK')
+    if link != image:
+        if os.path.lexists(link):
+            os.unlink(link)
+        os.symlink(os.path.basename(image), link)
     bb.note("Built %s (%d MB, label %s)" % (image, size_mb, d.getVar('FLATPAK_DATA_LABEL')))
 
 def flatpak_deploy(d, installation):

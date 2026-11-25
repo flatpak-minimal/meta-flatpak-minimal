@@ -35,12 +35,16 @@ class FlatpakDataPartitionTests(OESelftestTestCase):
         """The fstab entry and wic line of a grown partition."""
         self.write_config(CONFIG)
         v = get_bb_vars(['FLATPAK_DATA_FSTAB', 'FLATPAK_DATA_LABEL', 'localstatedir',
-                         'FLATPAK_DATA_IMAGE', 'FLATPAK_DATA_WKS_PART', 'FLATPAK_DATA_PART_TYPE'], IMAGE)
+                         'FLATPAK_DATA_IMAGE_LINK', 'FLATPAK_DATA_WKS_PART', 'FLATPAK_DATA_PART_TYPE',
+                         'IMGDEPLOYDIR', 'IMAGE_LINK_NAME'], IMAGE)
         self.assertEqual(v['FLATPAK_DATA_FSTAB'].split()[:3],
                          ['LABEL=%s' % v['FLATPAK_DATA_LABEL'], v['localstatedir'] + '/lib/flatpak', 'ext4'])
         self.assertIn('x-systemd.growfs', v['FLATPAK_DATA_FSTAB'])
         self.assertIn('--part-type %s' % v['FLATPAK_DATA_PART_TYPE'], v['FLATPAK_DATA_WKS_PART'])
-        self.assertIn('file=%s' % v['FLATPAK_DATA_IMAGE'], v['FLATPAK_DATA_WKS_PART'])
+        # The link, not IMAGE_NAME: that carries the run's DATETIME.
+        self.assertEqual(v['FLATPAK_DATA_IMAGE_LINK'],
+                         os.path.join(v['IMGDEPLOYDIR'], v['IMAGE_LINK_NAME'] + '.vfpk-data.ext4'))
+        self.assertIn('file=%s"' % v['FLATPAK_DATA_IMAGE_LINK'], v['FLATPAK_DATA_WKS_PART'])
         self.assertIn('--label %s' % v['FLATPAK_DATA_LABEL'], v['FLATPAK_DATA_WKS_PART'])
 
     def test_partition_without_growing(self):
