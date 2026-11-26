@@ -31,6 +31,14 @@
 # (FLATPAK_REMOTES), and the device has nothing left to apply. A bundle
 # installs under the origin remote it carries.
 #
+# FLATPAK_DISABLED_REMOTES lists remotes the installation keeps disabled once
+# the content is in. Use it for a build remote with no repository published
+# yet: its refs keep their origin, and the device never tries to reach it.
+# With user scope, the system installation the device creates at boot gets
+# the same remotes from remotes.d and disables them too. It only applies to
+# an image that installs content; without any, the device adds the remotes
+# from remotes.d, enabled, and the build warns.
+#
 # An installation already in the rootfs is kept: the guest starts from it and
 # adds to it. The resulting refs are listed, one "REF ORIGIN COMMIT" per
 # line, in ${FLATPAK_INSTALLED_REFS} for launchers. It records what the build
@@ -66,6 +74,7 @@
 inherit flatpak-common
 
 BUNDLED_FLATPAKS ??= ""
+FLATPAK_DISABLED_REMOTES ??= ""
 
 FLATPAK_APP_USER ??= ""
 FLATPAK_APP_ENV ??= ""
@@ -209,7 +218,7 @@ python () {
 ROOTFS_POSTPROCESS_COMMAND += "flatpak_cross_install"
 ROOTFS_POSTPROCESS_COMMAND:append = " flatpak_autostart_units flatpak_data_partition"
 
-do_rootfs[vardeps] += "BUNDLED_FLATPAKS FLATPAK_DEPLOY_MODE FLATPAK_INSTALL_SCOPE FLATPAK_INSTALL_USER FLATPAK_APP_USER FLATPAK_APP_ENV \
+do_rootfs[vardeps] += "BUNDLED_FLATPAKS FLATPAK_DISABLED_REMOTES FLATPAK_DEPLOY_MODE FLATPAK_INSTALL_SCOPE FLATPAK_INSTALL_USER FLATPAK_APP_USER FLATPAK_APP_ENV \
     FLATPAK_SERVICE_FILE FLATPAK_INSTALL_TIMEOUT FLATPAK_INSTALL_MEMORY FLATPAK_DATA_LABEL \
     FLATPAK_DATA_EXTRA_SPACE FLATPAK_DATA_SIZE FLATPAK_DATA_UUID FLATPAK_DATA_FSTAB FLATPAK_SEED \
     FLATPAK_DATA_MOUNT FLATPAK_DATA_DIRS FLATPAK_DATA_GROW FLATPAK_DATA_PART_TYPE"
@@ -450,6 +459,14 @@ def flatpak_guest_script(d, remotes, bundles):
                          'FLATPAK_BUNDLE_ALLOW_NO_ORIGIN = \\"1\\" in %s to install it anyway"; exit 1; }'
                          % (quote(ref), quote(b['pn'])))
 
+    for remote in (d.getVar('FLATPAK_DISABLED_REMOTES') or '').split():
+        r = quote(remote)
+        lines += [
+            'flatpak remotes --"$scope" --show-disabled --columns=name | grep -qx %s || '
+            '{ echo "vfpk: FLATPAK_DISABLED_REMOTES: the installation has no remote %s"; exit 1; }' % (r, r),
+            'flatpak remote-modify --"$scope" --disable %s' % r,
+        ]
+
     # flatpak list shortens refs and commits, so ask for each one. The list
     # goes to the output, not into the installation.
     lines += [
@@ -546,6 +563,7 @@ def flatpak_user_seed_unit(d):
 def flatpak_system_repo_unit(d):
     """Create the system installation beside a user installation, on every
     boot it is missing: a volatile /var starts empty again after a reboot."""
+    from shlex import quote
     installation = d.getVar('localstatedir') + '/lib/flatpak'
     return ''.join([
         '[Unit]\n',
@@ -558,6 +576,16 @@ def flatpak_system_repo_unit(d):
         # Without a system repo, unprivileged commands that cover every
         # installation fail. flatpak creates it and applies remotes.d.
         'ExecStart=%s/flatpak remotes --system\n' % d.getVar('bindir'),
+        # remotes.d adds every remote enabled, so disable those the user
+        # installation keeps disabled; skip any remotes.d did not add, as
+        # remote-modify fails on a missing remote.
+    ] + [
+        'ExecStart=/bin/sh -c %s\n' % quote(
+            'if %s/flatpak remotes --system --columns=name | grep -qx %s; then '
+            '%s/flatpak remote-modify --system --disable %s; fi'
+            % (d.getVar('bindir'), quote(r), d.getVar('bindir'), quote(r)))
+        for r in (d.getVar('FLATPAK_DISABLED_REMOTES') or '').split()
+    ] + [
         '\n[Install]\nWantedBy=multi-user.target\n',
     ])
 
@@ -958,6 +986,10 @@ python flatpak_cross_install () {
 
     installation = rootfs + d.getVar('localstatedir') + '/lib/flatpak'
     if not bundles:
+        if d.getVar('FLATPAK_DISABLED_REMOTES'):
+            bb.warn("FLATPAK_DISABLED_REMOTES (%s) does nothing: the image installs no flatpak "
+                    "content, so the device adds its remotes from remotes.d, enabled"
+                    % d.getVar('FLATPAK_DISABLED_REMOTES'))
         # The mount points and the partition are still needed.
         flatpak_deploy(d, installation)
         return

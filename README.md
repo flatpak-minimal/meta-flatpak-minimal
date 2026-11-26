@@ -403,6 +403,23 @@ Refs built here install under `FLATPAK_BUILD_REMOTE`, which must be in
 without them the remote needs `FLATPAK_REMOTE_NO_GPG`. Commits are
 timestamped with `SOURCE_DATE_EPOCH`.
 
+Until a repository is published at its URL, list the build remote in
+`FLATPAK_DISABLED_REMOTES`. An image that installs content keeps the remote
+disabled: its refs still name it as origin, and the device never tries to
+reach it, so nothing stalls on a host that does not resolve. With
+`FLATPAK_INSTALL_SCOPE = "user"`, the system installation the device creates
+at boot gets the remote from remotes.d and disables it too. Once the
+repository is published, take the remote out of the variable for new
+images; devices already in the field keep it disabled until it is enabled
+on them:
+
+```
+flatpak remote-modify --system --enable <remote>    # or --user, as installed
+```
+
+An image without flatpak content gets its remotes from remotes.d, enabled;
+the variable only warns there.
+
 #### Publishing
 
 Every producer also deploys its refs, like a package feed rather than an

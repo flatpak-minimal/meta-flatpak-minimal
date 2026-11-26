@@ -21,6 +21,9 @@ FLATPAK_REMOTES:append = " vfpk-test"
 FLATPAK_REMOTE_URL[vfpk-test] = "https://flatpak.example.invalid/vfpk-test/"
 FLATPAK_REMOTE_TITLE[vfpk-test] = "vfpk test content"
 FLATPAK_REMOTE_NO_GPG[vfpk-test] = "1"
+# Its URL does not resolve: keep it disabled, as a product would until its
+# repository is published.
+FLATPAK_DISABLED_REMOTES = "vfpk-test"
 
 BUNDLED_FLATPAKS:pn-flatpak-minimal-image = "vfpk-test-hello-flatpak"
 
