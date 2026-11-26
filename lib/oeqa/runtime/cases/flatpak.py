@@ -64,6 +64,32 @@ class FlatpakTest(OERuntimeTestCase):
             self.assertIn(origin, remotes, msg='%s: origin %s is not a remote' % (ref, origin))
 
     @OETestDepends(['flatpak.FlatpakTest.test_flatpak_installed_refs'])
+    def test_flatpak_disabled_remotes(self):
+        """Remotes in FLATPAK_DISABLED_REMOTES are disabled and still the origin
+        of installed refs; with a user installation, the system one does not
+        enable them either."""
+        disabled = (self.td.get('FLATPAK_DISABLED_REMOTES') or '').split()
+        if not disabled:
+            self.skipTest('FLATPAK_DISABLED_REMOTES is empty')
+        status, output = self.flatpak('remotes --show-disabled --columns=name,options')
+        self.assertEqual(status, 0, msg='flatpak remotes failed: %s' % output)
+        options = dict((line.split() + [''])[:2] for line in output.splitlines() if line.strip())
+        for remote in disabled:
+            self.assertIn(remote, options, msg='remote %s is missing' % remote)
+            self.assertIn('disabled', options[remote].split(','),
+                          msg='remote %s is enabled: %s' % (remote, output))
+        origins = set(origin for ref, origin, commit in self.installed_refs())
+        self.assertTrue(origins & set(disabled),
+                        msg='no installed ref has a disabled remote as origin: %s' % origins)
+        if self.td.get('FLATPAK_INSTALL_SCOPE') == 'user':
+            # The system installation is created at boot from remotes.d.
+            status, output = self.target.run('flatpak remotes --system --columns=name')
+            self.assertEqual(status, 0, msg='flatpak remotes --system failed: %s' % output)
+            for remote in disabled:
+                self.assertNotIn(remote, output.split(),
+                                 msg='remote %s is enabled in the system installation' % remote)
+
+    @OETestDepends(['flatpak.FlatpakTest.test_flatpak_installed_refs'])
     def test_flatpak_list_installations(self):
         """With a user installation, the account can list every installation."""
         status, output = self.target.run('cat /usr/share/vfpk/installed.scope')
