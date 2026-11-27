@@ -1,0 +1,24 @@
+[package]
+name = "openpgp-verify-sequoia"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+resolver = "3"
+license = "LGPL-2.0-or-later"
+description = "OpenPGP signature verification and keyring handling for libostree and flatpak, on Sequoia"
+publish = false
+
+[lib]
+name = "openpgp_verify_sequoia"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+# gpg compresses a message it signs: deflate, unless the key asks otherwise.
+sequoia-openpgp = { version = "2.2", default-features = false, features = ["compression-deflate"] }
+
+[features]
+default = ["crypto-openssl"]
+crypto-openssl = ["sequoia-openpgp/crypto-openssl"]
+crypto-nettle = ["sequoia-openpgp/crypto-nettle"]

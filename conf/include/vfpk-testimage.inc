@@ -27,6 +27,10 @@ FLATPAK_DISABLED_REMOTES = "vfpk-test"
 
 BUNDLED_FLATPAKS:pn-flatpak-minimal-image = "vfpk-test-hello-flatpak"
 
+# Verify OpenPGP signatures without GnuPG on the image, and in the guest.
+# The flatpak suite then lists Flathub, whose summary is signed.
+FLATPAK_OPENPGP = "sequoia"
+
 # testimage logs in as root over ssh.
 IMAGE_FEATURES:append:pn-flatpak-minimal-image = " allow-empty-password empty-root-password allow-root-login"
 

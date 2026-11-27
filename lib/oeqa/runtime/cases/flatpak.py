@@ -63,6 +63,22 @@ class FlatpakTest(OERuntimeTestCase):
         for ref, origin, commit in self.installed_refs():
             self.assertIn(origin, remotes, msg='%s: origin %s is not a remote' % (ref, origin))
 
+    @OETestDepends(['ssh.SSHTest.test_ssh'])
+    @OEHasPackage(['flatpak'])
+    def test_flatpak_openpgp_without_gnupg(self):
+        """With FLATPAK_OPENPGP = "sequoia", a GPG-signed remote verifies and the image has no GnuPG or GPGME."""
+        status, output = self.target.run('ls /usr/lib*/libopenpgp_verify_sequoia.so.*')
+        if status != 0:
+            self.skipTest('ostree verifies OpenPGP signatures with GPGME')
+        status, output = self.target.run('for p in gpg gpg2 gpgv gpg-agent gpgconf gpgme-tool; do command -v $p; done; '
+                                         'ls /usr/lib*/libgpgme.so.* 2>/dev/null')
+        self.assertEqual(output.strip(), '', msg='the image has GnuPG or GPGME: %s' % output)
+        # Flathub signs its summary index, and flatpak refuses one it cannot
+        # verify. x86_64 so that every machine asks for refs Flathub has.
+        status, output = self.flatpak('remote-ls --arch=x86_64 --columns=ref flathub', timeout=900)
+        self.assertEqual(status, 0, msg='flatpak remote-ls flathub failed: %s' % output)
+        self.assertIn('org.freedesktop.Platform', output, msg='no refs from Flathub: %s' % output[:400])
+
     @OETestDepends(['flatpak.FlatpakTest.test_flatpak_installed_refs'])
     def test_flatpak_disabled_remotes(self):
         """Remotes in FLATPAK_DISABLED_REMOTES are disabled and still the origin

@@ -14,6 +14,7 @@ packages.
 | `flatpak-minimal-flatpak-dart-flutter-remote-manager` | [flatpak_dart](https://github.com/flatpak-minimal/flatpak_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-minimal-appstream-dart-flathub-catalog` | [appstream_dart](https://github.com/flatpak-minimal/appstream_dart) | Flutter app; needs meta-flutter. |
 | `flatpak-remotes` | (this layer) | System flatpak remotes as static `/etc/flatpak/remotes.d` entries. Flathub by default. |
+| `openpgp-verify-sequoia` | (this layer) | OpenPGP signature verification for ostree and flatpak on Sequoia, in place of GPGME and gpg. Rust. Built with `FLATPAK_OPENPGP = "sequoia"`. |
 | `vfpk-seed` | (this layer) | First-boot unpacker for `FLATPAK_DEPLOY_MODE = "seed"`; added by `flatpak-cross-install`. |
 | `flatpak-minimal-image` | (this layer) | Reference image: flatpak plus `flatpak-remotes`; installs `BUNDLED_FLATPAKS` at build time. |
 
@@ -738,8 +739,10 @@ bitbake flatpak-minimal-image -c testimage
 The `flatpak` test suite (`lib/oeqa/runtime/cases/flatpak.py`) checks that
 every ref in `/usr/share/vfpk/installed.refs` is deployed at its commit under
 its origin, that the origins are configured remotes, that `flatpak repair`
-is clean and that the test app runs in its sandbox. CI runs it on all four
-machines. The include lets root log in without a password; it is for tests
+is clean and that the test app runs in its sandbox. The include sets
+`FLATPAK_OPENPGP = "sequoia"`, and the suite then also checks that the image
+has no GnuPG or GPGME and that listing Flathub, whose summary is signed,
+works: that needs the network. CI runs it on all four machines. The include lets root log in without a password; it is for tests
 only.
 
 `conf/include/vfpk-testimage-user.inc` puts the same content in a user
@@ -794,6 +797,39 @@ from, and `flatpak install` without a remote searches all of them.
 The bundled Flathub key (`6E5C05D979C76DAF93C081354184DD4D907A7CAE`) expires
 on 2027-06-14; refresh `recipes-core/flatpak-remotes/files/flathub.gpg` from
 `https://dl.flathub.org/repo/flathub.flatpakrepo` before then.
+
+### Verifying signatures without GnuPG
+
+ostree and flatpak verify the signatures of a remote through GPGME, which
+runs `gpg`, so an image with flatpak carries GnuPG, which is GPL-3.0-only.
+
+```
+FLATPAK_OPENPGP = "sequoia"
+```
+
+builds the target's ostree and flatpak on `openpgp-verify-sequoia` instead:
+the same checks, done with the Sequoia OpenPGP library (LGPL-2.0-or-later)
+on OpenSSL. Pulls from GPG-signed remotes are verified as before, Flathub
+among them, and neither GnuPG nor GPGME is installed. The default is
+`gpgme`. Set it in the distro or in `local.conf`, not for one recipe: ostree,
+flatpak and the vfpk guest all read it.
+
+This is a prototype, carried as one patch on ostree and one on flatpak
+(`recipes-extended/ostree/files`, `recipes-extended/flatpak/files`). What
+differs from GPGME:
+
+- Only verification and `ostree remote gpg-import` work on the target.
+  Signing, `ostree remote gpg-list-keys` and importing from a user's own
+  keyring fail with a message. The build host is not affected: native ostree
+  keeps GPGME, and signs there.
+- Sequoia's standard policy applies. It rejects SHA-1 data signatures,
+  which gpg still accepts.
+- A signed message of an OCI remote is read if it is uncompressed or
+  compressed with deflate, which is what gpg writes unless the key asks
+  for bzip2.
+
+The check is the same as gpg's in what matters for updates: a signature
+counts only while its key and certificate are neither expired nor revoked.
 
 ## Maintenance
 
